@@ -1,0 +1,33 @@
+[project]
+name = "smoothing_spline"
+authors = [
+  {name="Jonathan Taylor", email="jonathan.taylor.stanford@gmail.com"},
+]
+description = "Minimal Smoothing Spline Fitter. Provides an scikit-learn estimator"
+readme = "README.md"
+requires-python = ">=3.9"
+keywords = ["statistical learning", "spline", "smoothing", "non-parametric"]
+license = {text = "BSD-3-Clause"}
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: BSD License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "numpy",
+    "scipy",
+    "scikit-learn",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "rpy2"
+]
+
+[build-system]
+requires = ["setuptools>=61.0", "setuptools_scm[toml]>=6.2"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools_scm]
+write_to = "smoothing_spline/_version.py"
