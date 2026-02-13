@@ -326,7 +326,7 @@ Mean Absolute Difference: 0.003490
 </div>
 <div class="output_area docutils container">
 <div class="highlight"><pre>
-5.86 ms ± 40.8 μs per loop (mean ± std. dev. of 3 runs, 10 loops each)
+5.98 ms ± 81.8 μs per loop (mean ± std. dev. of 3 runs, 10 loops each)
 </pre></div></div>
 </div>
 <div class="nbinput docutils container">
@@ -350,9 +350,9 @@ Mean Absolute Difference: 0.003490
 <div class="highlight"><pre>
 Unit: milliseconds
                                        expr      min       lq     mean   median
- smooth.spline(hr_numeric, bikers, df = 10) 1.533482 1.947054 2.034625 2.156225
-       uq      max neval
- 2.171403 2.197301    10
+ smooth.spline(hr_numeric, bikers, df = 10) 1.531581 1.958319 2.115152 2.212313
+       uq     max neval
+ 2.249342 2.36564    10
 </pre></div></div>
 </div>
 </section>
@@ -502,7 +502,7 @@ Selected df (Python): 23.10044204963742
 <div class="output_area docutils container">
 <div class="highlight"><pre>
 Python Timing (n=500, all knots):
-743 ms ± 9.63 ms per loop (mean ± std. dev. of 7 runs, 1 loop each)
+775 ms ± 10.3 ms per loop (mean ± std. dev. of 7 runs, 1 loop each)
 </pre></div></div>
 </div>
 <div class="nbinput docutils container">
@@ -533,10 +533,10 @@ Python Timing (n=500, all knots):
 R Timing (n=500):
 Number of knots used by R: 502
 Unit: milliseconds
-                                 expr      min       lq    mean   median
- smooth.spline(x_syn, y_syn, df = 10) 1.017128 1.027162 1.04027 1.032833
+                                 expr      min       lq     mean   median
+ smooth.spline(x_syn, y_syn, df = 10) 1.030234 1.040905 1.058337 1.048129
        uq      max neval
- 1.039956 1.306849   100
+ 1.059189 1.469045   100
 </pre></div></div>
 </div>
 </section>
@@ -564,7 +564,7 @@ Unit: milliseconds
 <div class="output_area docutils container">
 <div class="highlight"><pre>
 Python Timing (n=10000, n_knots=200):
-87 ms ± 2.89 ms per loop (mean ± std. dev. of 7 runs, 10 loops each)
+88.2 ms ± 2.49 ms per loop (mean ± std. dev. of 7 runs, 10 loops each)
 </pre></div></div>
 </div>
 <div class="nbinput docutils container">
@@ -596,9 +596,9 @@ R Timing (n=10000):
 Number of knots used by R: 202
 Unit: milliseconds
                                  expr      min       lq     mean   median
- smooth.spline(x_syn, y_syn, df = 10) 29.54396 30.68539 31.72041 30.89628
+ smooth.spline(x_syn, y_syn, df = 10) 30.00524 31.84751 33.41107 32.14585
        uq      max neval
- 31.67716 53.50502   100
+ 33.30416 60.87318   100
 </pre></div></div>
 </div>
 <div class="nbinput nblast docutils container">
