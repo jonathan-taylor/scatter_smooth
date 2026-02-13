@@ -192,15 +192,41 @@ The relationship between hours and bikers might be better modeled on a log scale
 ```{code-cell} ipython3
 # Fit model on log(bikers)
 log_bikers = np.log(bikers + 1) # Add 1 to avoid log(0)
-spl_log = SplineFitter(df=5)
-spl_log.fit(hr_numeric, log_bikers)
+spl_log = SplineFitter(x=hr_numeric, df=df)
+spl_log.fit(log_bikers)
 
 fig, ax = plt.subplots(figsize=(10, 6))
 ax.scatter(hr_numeric + np.random.normal(0, 0.1, len(hr_numeric)), log_bikers, 
             s=1, c='lightgray')
-ax.plot(x_plot, spl_log.predict(x_plot), 'purple', lw=3, label='Log-Smoothing Spline (df=5)')
+ax.plot(x_plot, spl_log.predict(x_plot), 'purple', lw=3, label='Log-Smoothing Spline (df={df})')
 ax.set_xlabel("Hour")
 ax.set_ylabel("Log(Number of Bikers + 1)")
 ax.legend()
 plt.show()
 ```
+
+## Synthetic Speed Comparison (N=500)
+
+Finally, we compare the speed of both implementations on a synthetic dataset with 500 unique $x$ values.
+
+```{code-cell} ipython3
+# Synthetic data
+n_syn = 500
+x_syn = np.sort(np.random.uniform(0, 10, n_syn))
+y_syn = np.sin(x_syn) + np.random.normal(0, 0.1, n_syn)
+
+# Python Timing (using all unique x as knots)
+print("Python Timing (n=500):")
+%timeit SplineFitter(x=x_syn, df=10).fit(y_syn)
+```
+
+```{code-cell} ipython3
+%%R -i x_syn -i y_syn
+library(microbenchmark)
+cat("R Timing (n=500):\n")
+microbenchmark(
+  smooth.spline(x_syn, y_syn, df=10),
+  times=100
+)
+```
+
