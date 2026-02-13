@@ -162,11 +162,26 @@ class SplineFitter:
         elif self.lamval is None:
             self.lamval = 0.0
 
-    def fit(self, y):
+    def fit(self, y, sample_weight=None):
         """
         Fit the smoothing spline.
         """
         self.y = y
+        
+        # Handle weights: update if provided, otherwise use self.w
+        if sample_weight is not None:
+            self.w = sample_weight
+            if self._cpp_fitter:
+                # If C++ fitter exists, use efficient update
+                # Assuming SplineFitterCpp/ReinschCpp has update_weights method (implemented in C++)
+                if hasattr(self._cpp_fitter, "update_weights"):
+                     self._cpp_fitter.update_weights(self.w)
+                else:
+                     # Fallback if method missing (shouldn't happen with updated extension)
+                     self._prepare_matrices() 
+            else:
+                self._prepare_matrices()
+        
         # Ensure lamval is not None
         if self.lamval is None:
              self.lamval = 0.0

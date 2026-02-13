@@ -63,8 +63,8 @@ We fit a smoothing spline with a specified degrees of freedom ($df=5$).
 
 ```{code-cell} ipython3
 # Fit model
-spl_py = SplineFitter(df=5)
-spl_py.fit(hr_numeric, bikers)
+spl_py = SplineFitter(x=hr_numeric, df=5)
+spl_py.fit(bikers)
 
 # Predict
 y_py = spl_py.predict(x_plot)
@@ -115,7 +115,7 @@ We will compare the execution time for fitting the model.
 
 ```{code-cell} ipython3
 # Python Timing
-t_py = %timeit -o -n 10 -r 3 SplineFitter(df=10).fit(hr_numeric, bikers)
+t_py = %timeit -o -n 10 -r 3 SplineFitter(x=hr_numeric, df=10).fit(bikers)
 
 # R Timing
 ```
@@ -158,9 +158,10 @@ from scipy.optimize import minimize_scalar
 
 # Initialize fitter with data
 # Note: We use the internal C++ fitter for speed if available
-fitter = SplineFitter(knots=np.unique(hr_numeric)).fit(hr_numeric, bikers)
+fitter = SplineFitter(x=hr_numeric, knots=np.unique(hr_numeric))
+fitter.fit(bikers)
 # Access the internal C++ object for GCV calculation
-cpp_fitter = fitter.fitter_._cpp_fitter
+cpp_fitter = fitter._cpp_fitter
 
 # Define objective function
 def gcv_objective(log_lam):

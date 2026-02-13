@@ -251,14 +251,19 @@ public:
         N_ = compute_natural_spline_basis(x, knots, true, 0);
         Omega_ = compute_penalty_matrix(knots);
         
+        update_weights(weights_obj);
+    }
+    
+    void update_weights(py::object weights_obj) {
         if (weights_obj.is_none()) {
             NTW_ = N_.transpose(); 
             NTWN_ = N_.transpose() * N_;
         } else {
             Eigen::VectorXd weights = weights_obj.cast<Eigen::VectorXd>();
-            if (weights.size() != x.size()) throw std::invalid_argument("Weights size mismatch");
+            if (weights.size() != N_.rows()) throw std::invalid_argument("Weights size mismatch");
             
             NTW_ = N_.transpose(); 
+            // Multiply each COL of NTW_ (row of N) by weights[i]
             for (int i = 0; i < NTW_.cols(); ++i) {
                 NTW_.col(i) *= weights[i];
             }
@@ -298,22 +303,16 @@ public:
     }
     
     double gcv_score(double lamval, const Eigen::Ref<const Eigen::VectorXd>& y) {
+        // Unweighted residuals for now, as before
         Eigen::VectorXd alpha = fit(y, lamval);
-        
         Eigen::VectorXd f = N_ * alpha;
         Eigen::VectorXd resid = y - f;
-        
-        // Note: For correctly weighted GCV, should use weighted RSS.
-        // Assuming user handles weights externally or fine with unweighted approximation here 
-        // if weights not stored explicitly in an accessible way for residuals.
-        // But we DO have weights implicitly in NTW_.
-        // Let's just use squared norm of residuals for now as a base.
         double rss = resid.squaredNorm(); 
         
         double df = compute_df(lamval);
         double n = (double)y.size();
         double denom = 1.0 - df / n;
-        if (denom < 1e-6) return 1e20;
+        if (denom < 1e-6) return 1e20; // singularity
         
         return (rss / n) / (denom * denom);
     }
@@ -324,7 +323,6 @@ public:
 
 /**
  * Reinsch Form Fitter (O(N))
- * Specifically for the case where knots == x.
  */
 class SplineFitterReinschCpp {
     Eigen::SparseMatrix<double> Q_;
@@ -349,7 +347,7 @@ public:
         std::vector<Eigen::Triplet<double>> r_triplets;
         std::vector<Eigen::Triplet<double>> q_triplets;
         
-        // R (tridiagonal)
+        // R
         for (int i = 0; i < n_inner; ++i) {
             r_triplets.push_back({i, i, (h[i] + h[i+1]) / 3.0});
             if (i < n_inner - 1) {
@@ -359,7 +357,7 @@ public:
         }
         R_.setFromTriplets(r_triplets.begin(), r_triplets.end());
         
-        // Q (tridiagonal-like)
+        // Q
         for (int j = 0; j < n_inner; ++j) {
             q_triplets.push_back({j, j, inv_h[j]});
             q_triplets.push_back({j+1, j, -inv_h[j] - inv_h[j+1]});
@@ -367,7 +365,10 @@ public:
         }
         Q_.setFromTriplets(q_triplets.begin(), q_triplets.end());
         
-        // Weights
+        update_weights(weights_obj);
+    }
+    
+    void update_weights(py::object weights_obj) {
         weights_inv_.resize(n_);
         if (weights_obj.is_none()) {
             weights_inv_.setOnes();
@@ -377,11 +378,11 @@ public:
         }
         
         // M = Q^T W^{-1} Q
+        // Re-construct Winv sparse matrix
         Eigen::SparseMatrix<double> Winv(n_, n_);
         std::vector<Eigen::Triplet<double>> w_triplets;
         for(int i=0; i<n_; ++i) w_triplets.push_back({i, i, weights_inv_[i]});
         Winv.setFromTriplets(w_triplets.begin(), w_triplets.end());
-        
         M_ = Q_.transpose() * Winv * Q_;
     }
     
@@ -398,7 +399,7 @@ public:
         // f = y - lam * W^{-1} * Q * gamma
         Eigen::VectorXd Q_gamma = Q_ * gamma;
         Eigen::VectorXd term = weights_inv_.cwiseProduct(Q_gamma);
-        return y - lamval * term; 
+        return y - lamval * term;
     }
     
     double compute_df(double lamval) {
@@ -409,7 +410,6 @@ public:
         double trace_val = 0.0;
         long n_inner = M_.rows();
         
-        // Hutchinson for large N
         if (n_inner > 1000) {
              return compute_df_hutchinson(solver, lamval * M_, n_inner);
         }
@@ -444,7 +444,8 @@ public:
             trace_est += z.dot(u);
         }
         
-        return trace_est / n_samples;
+        long n = weights_inv_.size();
+        return n - (trace_est / n_samples);
     }
 
     double gcv_score(double lamval, const Eigen::Ref<const Eigen::VectorXd>& y) {
@@ -481,6 +482,8 @@ PYBIND11_MODULE(_spline_extension, m) {
              py::arg("x"), py::arg("knots"), py::arg("weights") = py::none())
         .def("fit", &SplineFitterCpp::fit, "Solve for spline coefficients",
              py::arg("y"), py::arg("lamval"))
+        .def("update_weights", &SplineFitterCpp::update_weights, "Update weights without recomputing basis",
+             py::arg("weights"))
         .def("compute_df", &SplineFitterCpp::compute_df, "Compute degrees of freedom for lambda",
              py::arg("lamval"))
         .def("gcv_score", &SplineFitterCpp::gcv_score, "Compute GCV score",
@@ -494,6 +497,8 @@ PYBIND11_MODULE(_spline_extension, m) {
              py::arg("x"), py::arg("weights") = py::none())
         .def("fit", &SplineFitterReinschCpp::fit, "Fit using Reinsch algorithm",
              py::arg("y"), py::arg("lamval"))
+        .def("update_weights", &SplineFitterReinschCpp::update_weights, "Update weights",
+             py::arg("weights"))
         .def("compute_df", &SplineFitterReinschCpp::compute_df, "Compute DF",
              py::arg("lamval"))
         .def("gcv_score", &SplineFitterReinschCpp::gcv_score, "Compute GCV score",
