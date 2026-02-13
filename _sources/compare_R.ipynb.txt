@@ -1,0 +1,462 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "id": "619f847a",
+   "metadata": {},
+   "source": [
+    "# Comparing `smoothing_spline` with R's `smooth.spline`\n",
+    "\n",
+    "This document demonstrates the usage of the `smoothing_spline` package and compares it with the standard `smooth.spline` function in R. We will use the `Bikeshare` dataset from the `ISLP` package.\n",
+    "\n",
+    "## Setup\n",
+    "\n",
+    "First, we need to import the necessary libraries and load the `rpy2` extension to run R code directly in this notebook."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "06b8bf7c",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import numpy as np\n",
+    "import pandas as pd\n",
+    "import matplotlib.pyplot as plt\n",
+    "import time\n",
+    "from ISLP import load_data\n",
+    "from smoothing_spline import SplineFitter\n",
+    "\n",
+    "%load_ext rpy2.ipython"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "097223bd",
+   "metadata": {},
+   "source": [
+    "## Loading the Data\n",
+    "\n",
+    "We will use the `Bikeshare` dataset, which contains daily counts of bike rentals in Washington D.C."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "e5b19eef",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "Bike = load_data('Bikeshare')\n",
+    "Bike.head()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "01e7ff4f",
+   "metadata": {},
+   "source": [
+    "We will focus on the relationship between the hour of the day (`hr`) and the number of bikers (`bikers`). Since `hr` is categorical in the original dataset but represents time, we convert it to numeric."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "2be062b3",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "df = 7\n",
+    "# 'bikers' is 'cnt' in the original dataset, ISLP might have renamed it or we use 'cnt'\n",
+    "if 'bikers' not in Bike.columns:\n",
+    "    Bike['bikers'] = Bike['cnt']\n",
+    "\n",
+    "hr_numeric = pd.to_numeric(Bike['hr'])\n",
+    "bikers = Bike['bikers']\n",
+    "\n",
+    "# Sort by hour for cleaner plotting lines\n",
+    "sorted_idx = np.argsort(hr_numeric)\n",
+    "x_plot = hr_numeric.iloc[sorted_idx].unique()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "a85e12a1",
+   "metadata": {},
+   "source": [
+    "## Fitting Smoothing Splines\n",
+    "\n",
+    "### 1. Using `smoothing_spline` (Python)\n",
+    "\n",
+    "We fit a smoothing spline with a specified degrees of freedom ($df=5$)."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "3d07ee2d",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Fit model\n",
+    "spl_py = SplineFitter(x=hr_numeric, df=df)\n",
+    "spl_py.fit(bikers)\n",
+    "\n",
+    "# Predict\n",
+    "y_py = spl_py.predict(x_plot)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "bc35daa0",
+   "metadata": {},
+   "source": [
+    "### 2. Using `smooth.spline` (R)\n",
+    "\n",
+    "We fit the same model using R. We transfer the data to R and run the `smooth.spline` function."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "1d9e73ec",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "%%R -i hr_numeric -i bikers -o y_r -i df\n",
+    "# Fit model in R\n",
+    "fit_r <- smooth.spline(hr_numeric, bikers, df=df)\n",
+    "\n",
+    "# Predict at unique hours\n",
+    "# unique() in R returns unsorted, but we want to match x_plot order\n",
+    "x_vals <- sort(unique(hr_numeric))\n",
+    "pred_r <- predict(fit_r, x_vals)\n",
+    "y_r <- pred_r$y"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "849921f6",
+   "metadata": {},
+   "source": [
+    "### Comparison\n",
+    "\n",
+    "Let's visualize the results. They should be nearly identical."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "253a9d31",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "fig, ax = plt.subplots(figsize=(10, 6))\n",
+    "ax.scatter(hr_numeric + np.random.normal(0, 0.1, len(hr_numeric)), bikers, \n",
+    "            s=1, c='lightgray', alpha=0.5, label='Data')\n",
+    "ax.plot(x_plot, y_py, 'b-', lw=3, label='Python (smoothing_spline)', alpha=0.8)\n",
+    "ax.plot(x_plot, y_r, 'r--', lw=3, label='R (smooth.spline)', alpha=0.8)\n",
+    "ax.set_xlabel(\"Hour\")\n",
+    "ax.set_ylabel(\"Number of Bikers\")\n",
+    "ax.set_title(\"Comparison of Smoothing Splines (df={df})\")\n",
+    "ax.legend()\n",
+    "plt.show()\n",
+    "\n",
+    "# Numerical comparison\n",
+    "# Note: R might handle repeated x values slightly differently (using weights)\n",
+    "# smoothing_spline handles them naturally in the basis construction.\n",
+    "diff = np.mean(np.abs(y_py - y_r))\n",
+    "print(f\"Mean Absolute Difference: {diff:.6f}\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "75089197",
+   "metadata": {},
+   "source": [
+    "## Speed Comparison\n",
+    "\n",
+    "We will compare the execution time for fitting the model."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "3056688e",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Python Timing\n",
+    "t_py = %timeit -o -n 10 -r 3 SplineFitter(x=hr_numeric, df=10).fit(bikers)\n",
+    "\n",
+    "# R Timing"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "4d60ba7a",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "%%R -i hr_numeric -i bikers\n",
+    "library(microbenchmark)\n",
+    "# R Timing\n",
+    "microbenchmark(\n",
+    "  smooth.spline(hr_numeric, bikers, df=10),\n",
+    "  times=10\n",
+    ")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "863b5040",
+   "metadata": {},
+   "source": [
+    "## Automatic Tuning with GCV\n",
+    "\n",
+    "One of the key features of smoothing splines is the automatic selection of the smoothing parameter ($\\lambda$) using Generalized Cross-Validation (GCV).\n",
+    "\n",
+    "### In R\n",
+    "\n",
+    "R's `smooth.spline` uses GCV (or CV) by default if `df` and `spar` are not specified."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "a0704552",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "%%R\n",
+    "fit_gcv <- smooth.spline(hr_numeric, bikers, cv=FALSE) # cv=FALSE implies GCV\n",
+    "cat(\"Selected df (R):\", fit_gcv$df, \"\n",
+    "\")\n",
+    "cat(\"Selected lambda (R):\", fit_gcv$lambda, \"\n",
+    "\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "22818236",
+   "metadata": {},
+   "source": [
+    "### In Python (smoothing_spline)\n",
+    "\n",
+    "The `smoothing_spline` package also supports finding $\\lambda$ that minimizes the GCV score via the `solve_gcv` method."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "3da54738",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Initialize fitter with data\n",
+    "# Note: We use the internal C++ fitter for speed if available\n",
+    "fitter = SplineFitter(x=hr_numeric, knots=np.unique(hr_numeric))\n",
+    "\n",
+    "# Solve for GCV\n",
+    "best_lam = fitter.solve_gcv(bikers)\n",
+    "print(f\"Selected lambda (Python): {best_lam}\")\n",
+    "\n",
+    "# Get corresponding df\n",
+    "# We can access the internal fitter to compute DF for verification\n",
+    "if fitter._cpp_fitter:\n",
+    "    best_lam_scaled = best_lam / fitter.x_scale_**3\n",
+    "    best_df = fitter._cpp_fitter.compute_df(best_lam_scaled)\n",
+    "    print(f\"Selected df (Python): {best_df}\")\n",
+    "else:\n",
+    "    best_df = \"N/A (C++ extension not available)\""
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "ca15fac3",
+   "metadata": {},
+   "source": [
+    "We can now visualize the optimal fit."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "f0c292c4",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "fig, ax = plt.subplots(figsize=(10, 6))\n",
+    "ax.scatter(hr_numeric + np.random.normal(0, 0.1, len(hr_numeric)), bikers, \n",
+    "            s=1, c='lightgray')\n",
+    "# fitter is already fitted with best_lam by solve_gcv\n",
+    "ax.plot(x_plot, fitter.predict(x_plot), 'g-', lw=3, label=f'Optimal GCV (df={best_df:.2f})')\n",
+    "ax.set_xlabel(\"Hour\")\n",
+    "ax.set_ylabel(\"Number of Bikers\")\n",
+    "ax.legend()\n",
+    "plt.show()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "3b212b6e",
+   "metadata": {},
+   "source": [
+    "## Another Example: Log-Transformation\n",
+    "\n",
+    "The relationship between hours and bikers might be better modeled on a log scale, as counts are non-negative and variance often increases with the mean."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "4cc3df0e",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Fit model on log(bikers)\n",
+    "log_bikers = np.log(bikers + 1) # Add 1 to avoid log(0)\n",
+    "spl_log = SplineFitter(x=hr_numeric, df=df)\n",
+    "spl_log.fit(log_bikers)\n",
+    "\n",
+    "fig, ax = plt.subplots(figsize=(10, 6))\n",
+    "ax.scatter(hr_numeric + np.random.normal(0, 0.1, len(hr_numeric)), log_bikers, \n",
+    "            s=1, c='lightgray')\n",
+    "ax.plot(x_plot, spl_log.predict(x_plot), 'purple', lw=3, label='Log-Smoothing Spline (df={df})')\n",
+    "ax.set_xlabel(\"Hour\")\n",
+    "ax.set_ylabel(\"Log(Number of Bikers + 1)\")\n",
+    "ax.legend()\n",
+    "plt.show()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "96a93898",
+   "metadata": {},
+   "source": [
+    "## Synthetic Speed Comparison (N=500)\n",
+    "\n",
+    "Finally, we compare the speed of both implementations on a synthetic dataset with 500 unique $x$ values."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "84dd741c",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Synthetic data\n",
+    "n_syn = 500\n",
+    "rng = np.random.default_rng(0)\n",
+    "x_syn = np.sort(rng.uniform(0, 10, n_syn))\n",
+    "y_syn = np.sin(x_syn) + rng.normal(0, 0.1, n_syn)\n",
+    "\n",
+    "# Python Timing (using all unique x as knots)\n",
+    "print(f\"Python Timing (n={n_syn}, all knots):\")\n",
+    "%timeit SplineFitter(x=x_syn, df=10).fit(y_syn)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "02fd033f",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "%%R -i x_syn -i y_syn\n",
+    "library(microbenchmark)\n",
+    "cat(sprintf(\"R Timing (n=%d):\\n\", length(x_syn)))\n",
+    "\n",
+    "# Fit once to inspect knots\n",
+    "fit_r_syn <- smooth.spline(x_syn, y_syn, df=10, all.knots=TRUE)\n",
+    "n_knots_r <- fit_r_syn$fit$nk\n",
+    "cat(sprintf(\"Number of knots used by R: %d\\n\", n_knots_r))\n",
+    "\n",
+    "microbenchmark(\n",
+    "  smooth.spline(x_syn, y_syn, df=10),\n",
+    "  times=100\n",
+    ")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "6cb4b0c9",
+   "metadata": {},
+   "source": [
+    "## Limited knots"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "b2110233",
+   "metadata": {},
+   "source": [
+    "R's `smooth.spline` automatically reduces the number of knots when $N > 49$ (typically to around 50-100) to speed up computation. For $N=10000$, `R` uses about 200 knots.\n",
+    "\n",
+    "To make a fair speed comparison, we can limit the number of knots in Python as well."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "73a8bcaa",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Python Timing with reduced knots\n",
+    "n_syn = 10000\n",
+    "x_syn = np.sort(rng.uniform(0, 10, n_syn))\n",
+    "y_syn = np.sin(x_syn) + rng.normal(0, 0.1, n_syn)\n",
+    "n_knots_reduced = 200 # Similar to R's behavior\n",
+    "print(f\"Python Timing (n={n_syn}, n_knots={n_knots_reduced}):\")\n",
+    "%timeit SplineFitter(x=x_syn, df=10, n_knots=n_knots_reduced).fit(y_syn)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "56a4420b",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "%%R -i x_syn -i y_syn\n",
+    "library(microbenchmark)\n",
+    "cat(sprintf(\"R Timing (n=%d):\\n\", length(x_syn)))\n",
+    "\n",
+    "# Fit once to inspect knots\n",
+    "fit_r_syn <- smooth.spline(x_syn, y_syn, df=10, nknots=200)\n",
+    "n_knots_r <- fit_r_syn$fit$nk\n",
+    "cat(sprintf(\"Number of knots used by R: %d\\n\", n_knots_r))\n",
+    "\n",
+    "microbenchmark(\n",
+    "  smooth.spline(x_syn, y_syn, df=10),\n",
+    "  times=100\n",
+    ")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "830f71ce",
+   "metadata": {},
+   "outputs": [],
+   "source": []
+  }
+ ],
+ "metadata": {
+  "jupytext": {
+   "default_lexer": "ipython3",
+   "formats": "md:myst,ipynb"
+  },
+  "kernelspec": {
+   "display_name": "Python 3 (ipykernel)",
+   "language": "python",
+   "name": "python3"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 5
+}
