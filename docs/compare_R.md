@@ -90,15 +90,15 @@ y_r <- pred_r$y
 Let's visualize the results. They should be nearly identical.
 
 ```{code-cell} ipython3
-plt.figure(figsize=(10, 6))
-plt.scatter(hr_numeric + np.random.normal(0, 0.1, len(hr_numeric)), bikers, 
+fig, ax = plt.subplots(figsize=(10, 6))
+ax.scatter(hr_numeric + np.random.normal(0, 0.1, len(hr_numeric)), bikers, 
             s=1, c='lightgray', alpha=0.5, label='Data')
-plt.plot(x_plot, y_py, 'b-', lw=3, label='Python (smoothing_spline)', alpha=0.8)
-plt.plot(x_plot, y_r, 'r--', lw=3, label='R (smooth.spline)', alpha=0.8)
-plt.xlabel("Hour")
-plt.ylabel("Number of Bikers")
-plt.title("Comparison of Smoothing Splines (df=5)")
-plt.legend()
+ax.plot(x_plot, y_py, 'b-', lw=3, label='Python (smoothing_spline)', alpha=0.8)
+ax.plot(x_plot, y_r, 'r--', lw=3, label='R (smooth.spline)', alpha=0.8)
+ax.set_xlabel("Hour")
+ax.set_ylabel("Number of Bikers")
+ax.set_title("Comparison of Smoothing Splines (df=5)")
+ax.legend()
 plt.show()
 
 # Numerical comparison
@@ -191,13 +191,13 @@ We can now fit the final model with the optimal parameters.
 spl_opt = SmoothingSpline(lamval=best_lam)
 spl_opt.fit(hr_numeric, bikers)
 
-plt.figure(figsize=(10, 6))
-plt.scatter(hr_numeric + np.random.normal(0, 0.1, len(hr_numeric)), bikers, 
+fig, ax = plt.subplots(figsize=(10, 6))
+ax.scatter(hr_numeric + np.random.normal(0, 0.1, len(hr_numeric)), bikers, 
             s=1, c='lightgray')
-plt.plot(x_plot, spl_opt.predict(x_plot), 'g-', lw=3, label=f'Optimal GCV (df={best_df:.2f})')
-plt.xlabel("Hour")
-plt.ylabel("Number of Bikers")
-plt.legend()
+ax.plot(x_plot, spl_opt.predict(x_plot), 'g-', lw=3, label=f'Optimal GCV (df={best_df:.2f})')
+ax.set_xlabel("Hour")
+ax.set_ylabel("Number of Bikers")
+ax.legend()
 plt.show()
 ```
 
@@ -211,13 +211,13 @@ log_bikers = np.log(bikers + 1) # Add 1 to avoid log(0)
 spl_log = SmoothingSpline(df=5)
 spl_log.fit(hr_numeric, log_bikers)
 
-plt.figure(figsize=(10, 6))
-plt.scatter(hr_numeric + np.random.normal(0, 0.1, len(hr_numeric)), log_bikers, 
+fig, ax = plt.subplots(figsize=(10, 6))
+ax.scatter(hr_numeric + np.random.normal(0, 0.1, len(hr_numeric)), log_bikers, 
             s=1, c='lightgray')
-plt.plot(x_plot, spl_log.predict(x_plot), 'purple', lw=3, label='Log-Smoothing Spline (df=5)')
-plt.xlabel("Hour")
-plt.ylabel("Log(Number of Bikers + 1)")
-plt.legend()
+ax.plot(x_plot, spl_log.predict(x_plot), 'purple', lw=3, label='Log-Smoothing Spline (df=5)')
+ax.set_xlabel("Hour")
+ax.set_ylabel("Log(Number of Bikers + 1)")
+ax.legend()
 plt.show()
 ```
 
