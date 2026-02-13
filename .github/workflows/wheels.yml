@@ -25,7 +25,6 @@ jobs:
           CIBW_ARCHS_MACOS: x86_64 arm64
           CIBW_ARCHS_WINDOWS: AMD64
           CIBW_SKIP: pp* # Skip PyPy
-          CIBW_ENVIRONMENT: PIP_ONLY_BINARY=:all:
           CIBW_TEST_REQUIRES: pytest
           CIBW_TEST_COMMAND: cd {project}/tests && pytest .
           CIBW_TEST_COMMAND_WINDOWS: cd /d {project}\tests && pytest .
