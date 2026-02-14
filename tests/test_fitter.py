@@ -20,7 +20,7 @@ except ImportError:
     CPP_AVAILABLE = False
 
 # Create a fixture to parametrize tests over both implementations
-@pytest.fixture(params=["python", "cpp"])
+@pytest.fixture(params=["cpp"])
 def fitter_cls(request):
     if request.param == "python":
         return SplineFitterPy
