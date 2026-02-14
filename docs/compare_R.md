@@ -271,6 +271,10 @@ microbenchmark(
 )
 ```
 
-```{code-cell} ipython3
+## Performance Note
 
-```
+While the C++ implementation offers significant speedups over the pure Python version, it is currently slower than R's `smooth.spline` for exact degrees of freedom calculation. This is because our current implementation of the EDF calculation involves $O(N^2)$ operations (specifically, $N$ back-solves to compute the trace of the inverse), whereas R likely uses a specialized $O(N)$ algorithm for computing the trace of a banded matrix inverse.
+
+For large $N$, the Hutchinson estimator (randomized trace estimation) is used to mitigate this cost, reducing the complexity to $O(k \cdot N)$ where $k$ is the number of random vectors (default 30).
+
+**TODO:** Implement exact $O(N)$ trace calculation for pentadiagonal matrices to match R's performance for exact EDF.

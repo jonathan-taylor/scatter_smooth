@@ -16,14 +16,13 @@ classifiers = [
 ]
 dependencies = [
     "numpy",
-    "scipy",
-    "scikit-learn",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest",
-    "rpy2"
+    "rpy2",
+    "scipy"
 ]
 doc = [
     "myst-parser",
@@ -35,7 +34,7 @@ doc = [
     "matplotlib",
     "ISLP",
     "jupytext",
-    "rpy2",
+    "rpy2"
 ]
 
 [build-system]

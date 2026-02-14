@@ -1,107 +1,186 @@
 from dataclasses import dataclass, field
-from scipy.interpolate import CubicSpline
 import numpy as np
-from scipy import sparse
-from scipy.sparse import linalg as splinalg
-import time
-from scipy.optimize import brentq, minimize_scalar
-from .base import _BaseSplineFitter
 
 @dataclass
-class SplineFitter(_BaseSplineFitter):
+class SplineFitter:
     """
-    Pure Python implementation of the smoothing spline fitter.
+    SplineFitter implementation using C++ extension for performance.
     """
+
+    x: np.ndarray
+    w: np.ndarray = None
+    lamval: float = None
+    df: int = None
+    knots: np.ndarray = None
+    n_knots: int = None
+    _cpp_fitter: object = field(init=False, default=None, repr=False)
+
+
+    def __post_init__(self):
+        self._prepare_matrices()
+        if self.df is not None:
+            self.lamval = self._find_lamval_for_df(self.df)
+        elif self.lamval is None:
+            self.lamval = 0.0
+
+    def _prepare_matrices(self):
+        raise NotImplementedError
+
+    def _find_lamval_for_df(self, df):
+        raise NotImplementedError
+
+    def _setup_scaling_and_knots(self):
+        """
+        Compute the scaled values and knots required for both
+        fitting and EDF calculation.
+        """
+        x = self.x
+        weights = self.w
+        knots = self.knots
+        n_knots = self.n_knots
+        
+        n = len(x)
+        if weights is None: weights = np.ones(n)
+        
+        if knots is None:
+            if n_knots is not None:
+                percs = np.linspace(0, 100, n_knots)
+                knots = np.percentile(x, percs)
+            else:
+                knots = np.sort(np.unique(x))
+        else:
+            knots = np.asarray(knots)
+            knots.sort()
+            
+        self.knots = knots
+        n_k = len(knots)
+        self.n_k_ = n_k
+
+        # --- Standardization / Scaling ---
+        x_min, x_max = x.min(), x.max()
+        scale = x_max - x_min if x_max > x_min else 1.0
+        self.x_min_ = x_min
+        self.x_scale_ = scale
+
+        x_scaled = (x - x_min) / scale
+        knots_scaled = (knots - x_min) / scale
+        self.knots_scaled_ = knots_scaled
+        return x_scaled, knots_scaled
+
     def _prepare_matrices(self):
         """
-        Compute the scaled matrices required for both
-        fitting and EDF calculation in pure Python.
+        Initialize the C++ extension fitter.
         """
-        x_scaled, knots_scaled = self._setup_scaling_and_knots()
-        n_k = self.n_k_
-        weights = self.w if self.w is not None else np.ones(len(self.x))
-
-        # --- Design Matrix N ---
-        cs_basis = CubicSpline(knots_scaled, np.eye(n_k), bc_type='natural')
-        N_mat = cs_basis(x_scaled)
-
-        # Apply linear extrapolation to the basis matrix for points outside the boundaries
-        mask_lo = x_scaled < knots_scaled[0]
-        mask_hi = x_scaled > knots_scaled[-1]
+        from smoothing_spline._spline_extension import SplineFitterCpp as _ExtSplineFitterCpp
+        from smoothing_spline._spline_extension import SplineFitterReinschCpp as _ExtSplineFitterReinschCpp
         
-        if np.any(mask_lo) or np.any(mask_hi):
-            cs_basis_d1 = cs_basis.derivative(nu=1)
-            d1_left = cs_basis_d1(knots_scaled[0])
-            d1_right = cs_basis_d1(knots_scaled[-1])
+        x_scaled, knots_scaled = self._setup_scaling_and_knots()
+        
+        # Check if we can use the efficient Reinsch algorithm (knots == unique(x))
+        # np.unique returns sorted unique elements
+        unique_x, inverse = np.unique(x_scaled, return_inverse=True)
+        
+        if len(knots_scaled) == len(unique_x) and np.allclose(knots_scaled, unique_x):
+            self._use_reinsch = True
+            self._inverse_indices = inverse
             
-            vals_at_left_boundary = np.zeros(n_k); vals_at_left_boundary[0] = 1
-            vals_at_right_boundary = np.zeros(n_k); vals_at_right_boundary[-1] = 1
-
-            if np.any(mask_lo):
-                x_lo = x_scaled[mask_lo]
-                N_mat[mask_lo, :] = vals_at_left_boundary[None, :] + (x_lo - knots_scaled[0])[:, None] * d1_left[None, :]
+            # Aggregate weights for Reinsch
+            w_raw = self.w if self.w is not None else np.ones(len(x_scaled))
+            w_agg = np.bincount(inverse, weights=w_raw)
             
-            if np.any(mask_hi):
-                x_hi = x_scaled[mask_hi]
-                N_mat[mask_hi, :] = vals_at_right_boundary[None, :] + (x_hi - knots_scaled[-1])[:, None] * d1_right[None, :]
-
-        # --- Penalty Matrix Omega ---
-        hk = np.diff(knots_scaled)
-        inv_hk = 1.0 / hk
-        R_k = sparse.diags([hk[1:-1]/6.0, (hk[:-1]+hk[1:])/3.0, hk[1:-1]/6.0], [-1, 0, 1], shape=(n_k-2, n_k-2))
-        Q_k = sparse.diags([inv_hk[:-1], -inv_hk[:-1]-inv_hk[1:], inv_hk[1:]], [0, -1, -2], shape=(n_k, n_k-2))
-
-        if sparse.issparse(R_k):
-            R_inv_QT = splinalg.spsolve(R_k.tocsc(), Q_k.T.tocsc()).toarray()
+            self._cpp_fitter = _ExtSplineFitterReinschCpp(knots_scaled, w_agg)
+            
+            # For Reinsch, N and Omega are implicit or managed differently, but we expose properties if needed
+            # For now, we don't expose N_ and Omega_ for Reinsch path in python as they are not used
         else:
-            R_inv_QT = np.linalg.solve(R_k, Q_k.T)
-
-        self.Omega_ = Q_k @ R_inv_QT
-        self.N_ = N_mat
-        self.NTW_ = self.N_.T * weights
+            self._use_reinsch = False
+            self._cpp_fitter = _ExtSplineFitterCpp(x_scaled, knots_scaled, self.w)
+            self.N_ = self._cpp_fitter.get_N()
+            self.Omega_ = self._cpp_fitter.get_Omega()
+            if self.w is not None:
+                self.NTW_ = self.N_.T * self.w
+            else:
+                self.NTW_ = self.N_.T
 
     def _find_lamval_for_df(self, target_df, log10_lam_bounds=(-12, 12)):
         """
-        Finds the exact lambda value that yields the target degrees of freedom.
+        Finds the exact lambda value that yields the target degrees of freedom
+        using the C++ implementation.
         """
         if target_df >= self.n_k_ - 0.01:
-            raise ValueError(f"Target DF ({target_df}) too high. Max is roughly {self.n_k_}.")
+            raise ValueError(f"Target DF ({target_df}) too high.")
         if target_df <= 2.01:
-            raise ValueError(f"Target DF ({target_df}) too low. Min is 2 (linear).")
+            raise ValueError(f"Target DF ({target_df}) too low.")
 
-        XTWX = self.NTW_ @ self.N_
-        def df_error_func(log_lam_scaled):
-            lam_scaled = 10 ** log_lam_scaled
-            LHS = XTWX + lam_scaled * self.Omega_
-            S_matrix = np.linalg.solve(LHS, XTWX)
-            current_df = np.trace(S_matrix)
-            return current_df - target_df
+        if hasattr(self._cpp_fitter, "solve_for_df"):
+             try:
+                 # Note: log10_lam_bounds are currently ignored by C++ solver (uses [-12, 12])
+                 lam_scaled = self._cpp_fitter.solve_for_df(target_df)
+                 return lam_scaled * (self.x_scale_ ** 3)
+             except RuntimeError as e:
+                 raise RuntimeError(f"C++ solver failed: {e}")
         
-        try:
-            log_lam_scaled_opt = brentq(df_error_func, log10_lam_bounds[0], log10_lam_bounds[1])
-        except ValueError as e:
-            raise RuntimeError("Could not find root in the given bounds.") from e
+        raise RuntimeError("C++ extension required for finding lambda from DF.")
 
-        lam_scaled_opt = 10 ** log_lam_scaled_opt
-        return lam_scaled_opt * (self.x_scale_ ** 3)
+    def solve_gcv(self, y, sample_weight=None, log10_lam_bounds=(-10, 10)):
+        """
+        Find optimal lambda using GCV and fit the model using C++.
+        """
+        if sample_weight is not None:
+            self.update_weights(sample_weight)
+        y_arr = np.asarray(y)
+        
+        if hasattr(self, '_use_reinsch') and self._use_reinsch:
+             w_raw = self.w if self.w is not None else np.ones(len(y_arr))
+             # w_agg is already in fitter, but we need it for y_agg
+             w_agg = np.bincount(self._inverse_indices, weights=w_raw)
+             y_sum = np.bincount(self._inverse_indices, weights=y_arr * w_raw)
+             y_eff = y_sum / w_agg
+        else:
+             y_eff = y_arr
+        
+        if hasattr(self._cpp_fitter, "solve_gcv"):
+             # Adjust bounds for C++ which works on scaled lambda
+             shift = 3 * np.log10(self.x_scale_)
+             min_log = log10_lam_bounds[0] - shift
+             max_log = log10_lam_bounds[1] - shift
+             
+             try:
+                 lam_scaled = self._cpp_fitter.solve_gcv(y_eff, min_log, max_log)
+                 self.lamval = lam_scaled * (self.x_scale_ ** 3)
+                 self.fit(y)
+                 return self.lamval
+             except RuntimeError as e:
+                 raise RuntimeError(f"C++ GCV solver failed: {e}")
+                 
+        raise RuntimeError("C++ extension required for GCV optimization.")
 
     def fit(self, y, sample_weight=None):
         """
-        Fit the smoothing spline using pure Python.
+        Fit the smoothing spline using the C++ extension.
         """
         self.y = y
         if sample_weight is not None:
             self.w = sample_weight
-            self._prepare_matrices()
+            if hasattr(self._cpp_fitter, "update_weights"):
+                 self._cpp_fitter.update_weights(self.w)
+            else:
+                 self._prepare_matrices()
         
         if self.lamval is None:
              self.lamval = 0.0
         lam_scaled = self.lamval / self.x_scale_**3
-
-        LHS = self.NTW_ @ self.N_ + lam_scaled * self.Omega_
-        RHS = self.NTW_ @ self.y
-        self.alpha_ = np.linalg.solve(LHS, RHS)
-        self.spline_ = CubicSpline(self.knots_scaled_, self.alpha_, bc_type='natural')
+        
+        y_arr = np.asarray(y)
+        if hasattr(self, '_use_reinsch') and self._use_reinsch:
+             w_raw = self.w if self.w is not None else np.ones(len(y_arr))
+             w_agg = np.bincount(self._inverse_indices, weights=w_raw)
+             y_sum = np.bincount(self._inverse_indices, weights=y_arr * w_raw)
+             y_eff = y_sum / w_agg
+             
+             self._cpp_fitter.fit(y_eff, lam_scaled)
+        else:
+             self._cpp_fitter.fit(y_arr, lam_scaled)
 
         y_hat = self.predict(self.x)
         if self.w is not None:
@@ -115,73 +194,37 @@ class SplineFitter(_BaseSplineFitter):
         self.intercept_ = beta[1]
         self.coef_ = beta[0]
 
-    def update_weights(self, w):
+    def predict(self, x):
         """
-        Update the weights and refit the model.
+        Predict the response for a new set of predictor variables using C++ basis evaluation.
+        Parameters
+        ----------
+        x : np.ndarray
+            The predictor variables.
+        Returns
+        -------
+        np.ndarray
+            The predicted response.
+        """
+        x_scaled = (x - self.x_min_) / self.x_scale_
+        return self._cpp_fitter.predict(x_scaled)
+
+    @property
+    def nonlinear_(self):
+        """
+        The non-linear component of the fitted spline.
+        """
+        linear_part = self.coef_ * self.x + self.intercept_
+        return self.predict(self.x) - linear_part
+
+    def update_weights(self, w, update_lamval=False):
+        """
+        Update the weights and refit the model using C++.
         """
         self.w = w
-        self._prepare_matrices()
-        if self.df is not None:
+        if hasattr(self._cpp_fitter, "update_weights"):
+             self._cpp_fitter.update_weights(self.w)
+        else:
+             self._prepare_matrices()
+        if self.df is not None and update_lamval:
             self.lamval = self._find_lamval_for_df(self.df)
-        if hasattr(self, 'y'):
-            self.fit(self.y)
-
-    def solve_gcv(self, y, sample_weight=None, log10_lam_bounds=(-10, 10)):
-        """
-        GCV is not implemented in pure Python.
-        """
-        raise NotImplementedError("GCV optimization requires the C++ extension (SplineFitterCpp).")
-
-def compute_edf_reinsch(x, lamval, weights=None):
-    x = np.array(x, dtype=float)
-    n = len(x)
-    if weights is None:
-        w_inv_vec = np.ones(n)
-    else:
-        weights = np.array(weights, dtype=float)
-        w_inv_vec = 1.0 / (weights + 1e-12)
-    W_inv = sparse.diags(w_inv_vec)
-    h = np.diff(x)
-    inv_h = 1.0 / h
-    main_diag_R = (h[:-1] + h[1:]) / 3.0
-    off_diag_R = h[1:-1] / 6.0
-    R = sparse.diags([off_diag_R, main_diag_R, off_diag_R],
-                     [-1, 0, 1], shape=(n-2, n-2))
-    d0 = inv_h[:-1]
-    d1 = -inv_h[:-1] - inv_h[1:]
-    d2 = inv_h[1:]
-    Q = sparse.diags([d0, d1, d2], [0, -1, -2], shape=(n, n-2))
-    B = Q.T @ W_inv @ Q
-    M_trace = R + lamval * B
-    M_trace = M_trace.tocsc()
-    B = B.tocsc()
-    X = splinalg.spsolve(M_trace, B)
-    if sparse.issparse(X):
-        tr_val = X.diagonal().sum()
-    else:
-        tr_val = np.trace(X)
-    return n - lamval * tr_val
-
-def estimate_edf_hutchinson(x, lamval, weights=None, n_vectors=50):
-    x = np.array(x, dtype=float)
-    n = len(x)
-    if weights is None: w_inv_vec = np.ones(n)
-    else: w_inv_vec = 1.0 / (np.array(weights, dtype=float) + 1e-12)
-    W_inv = sparse.diags(w_inv_vec)
-    h = np.diff(x)
-    inv_h = 1.0 / h
-    R = sparse.diags([h[1:-1]/6.0, (h[:-1]+h[1:])/3.0, h[1:-1]/6.0], [-1, 0, 1], shape=(n-2, n-2))
-    Q = sparse.diags([inv_h[:-1], -inv_h[:-1]-inv_h[1:], inv_h[1:]], [0, -1, -2], shape=(n, n-2))
-    B = Q.T @ W_inv @ Q
-    M_trace = R + lamval * B
-    M_trace = M_trace.tocsc()
-    solve_M = splinalg.factorized(M_trace)
-    trace_est = 0.0
-    dim = n - 2
-    for i in range(n_vectors):
-        z = np.random.choice([-1, 1], size=dim)
-        v = B @ z
-        u = solve_M(v)
-        trace_est += np.dot(z, u)
-    mean_trace = trace_est / n_vectors
-    return n - lamval * mean_trace

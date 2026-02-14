@@ -1,8 +1,10 @@
+
 import numpy as np
 import pytest
 from scipy import sparse
 from scipy.sparse import linalg as splinalg
 from smoothing_spline.fitter import SplineFitter
+from tests.spline_fitter import SplineFitter as SplineFitterPy
 
 try:
     from smoothing_spline._spline_extension import SplineFitterCpp as ExtSplineFitterCpp
@@ -17,8 +19,8 @@ def test_cpp_fitter_integration():
     knots = np.sort(rng.uniform(0, 10, 10))
     y = np.sin(x) + rng.normal(0, 0.1, 50)
     
-    # Python Matrices
-    py_fitter = SplineFitter(x, knots=knots)
+    # Python Matrices (using pure python implementation)
+    py_fitter = SplineFitterPy(x, knots=knots)
     py_fitter._prepare_matrices() # Computes N_, NTW_, Omega_
     
     # C++ Matrices via Class
@@ -66,7 +68,7 @@ def test_cpp_fitter_weights():
     y = np.sin(x) + rng.normal(0, 0.1, 50)
     w = rng.uniform(0.5, 2.0, 50)
     
-    py_fitter = SplineFitter(x, knots=knots, w=w)
+    py_fitter = SplineFitterPy(x, knots=knots, w=w)
     py_fitter._prepare_matrices()
     
     # C++ uses raw x, knots
@@ -94,7 +96,7 @@ def test_cpp_df():
     x = np.sort(rng.uniform(0, 10, 50))
     knots = np.sort(rng.uniform(0, 10, 10))
     
-    py_fitter = SplineFitter(x, knots=knots)
+    py_fitter = SplineFitterPy(x, knots=knots)
     py_fitter._prepare_matrices()
     
     cpp_fitter = ExtSplineFitterCpp(x, knots)
@@ -114,18 +116,18 @@ def test_cpp_df():
 
 @pytest.mark.skipif(not CPP_AVAILABLE, reason="C++ extension not built")
 def test_cpp_prediction():
-    from smoothing_spline.cpp_fitter import SplineFitterCpp
+    # Helper already imports SplineFitter as SplineFitterPy
     rng = np.random.default_rng(102)
     x = np.sort(rng.uniform(0, 10, 50))
     y = np.sin(x) + rng.normal(0, 0.1, 50)
     
-    # Python fit
-    py_fitter = SplineFitter(x, df=5)
+    # Pure Python fit
+    py_fitter = SplineFitterPy(x, df=5)
     py_fitter.fit(y)
     py_pred = py_fitter.predict(x)
     
-    # C++ fit
-    cpp_fitter = SplineFitterCpp(x, df=5)
+    # C++ fit (Main Class)
+    cpp_fitter = SplineFitter(x, df=5)
     cpp_fitter.fit(y)
     cpp_pred = cpp_fitter.predict(x)
     

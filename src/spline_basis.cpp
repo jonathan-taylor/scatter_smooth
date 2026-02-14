@@ -6,8 +6,134 @@
 #include <iostream>
 #include <algorithm>
 #include <cmath>
+#include <functional>
+#include <limits>
 
 namespace py = pybind11;
+
+namespace {
+    double brent_root(std::function<double(double)> func, double a, double b, double tol=1e-6, int max_iter=100) {
+        double fa = func(a);
+        double fb = func(b);
+        if (fa * fb > 0) {
+             throw std::runtime_error("Root not bracketed: target DF out of feasible range.");
+        }
+        
+        if (std::abs(fa) < std::abs(fb)) { std::swap(a, b); std::swap(fa, fb); }
+        
+        double c = a;
+        double fc = fa;
+        bool mflag = true;
+        double s = 0;
+        double d = 0;
+        
+        for (int i = 0; i < max_iter; ++i) {
+            if (std::abs(b - a) < tol) return b;
+            if (std::abs(fb) < tol) return b;
+
+            if (fa != fc && fb != fc) {
+                s = (a * fb * fc) / ((fa - fb) * (fa - fc)) +
+                    (b * fa * fc) / ((fb - fa) * (fb - fc)) +
+                    (c * fa * fb) / ((fc - fa) * (fc - fb));
+            } else {
+                s = b - fb * (b - a) / (fb - fa);
+            }
+            
+            double tmp1 = (3 * a + b) / 4;
+            bool cond1 = (s < std::min(tmp1, b) || s > std::max(tmp1, b));
+            bool cond2 = mflag && (std::abs(s - b) >= (std::abs(b - c) / 2));
+            bool cond3 = !mflag && (std::abs(s - b) >= (std::abs(c - d) / 2));
+            bool cond4 = mflag && (std::abs(b - c) < tol);
+            bool cond5 = !mflag && (std::abs(c - d) < tol);
+            
+            if (cond1 || cond2 || cond3 || cond4 || cond5) {
+                s = (a + b) / 2;
+                mflag = true;
+            } else {
+                mflag = false;
+            }
+            
+            double fs = func(s);
+            d = c;
+            c = b;
+            fc = fb;
+            
+            if (fa * fs < 0) {
+                b = s;
+                fb = fs;
+            } else {
+                a = s;
+                fa = fs;
+            }
+            
+            if (std::abs(fa) < std::abs(fb)) { std::swap(a, b); std::swap(fa, fb); }
+        }
+        return b;
+    }
+
+    // Brent's method for minimization
+    double brent_min(std::function<double(double)> func, double a, double b, double tol=1e-5, int max_iter=100) {
+        double x, w, v, fx, fw, fv;
+        double d = 0.0, e = 0.0;
+        double u, fu;
+        const double gold = 0.3819660;
+        
+        x = w = v = a + gold * (b - a);
+        fx = fw = fv = func(x);
+        
+        for(int iter = 0; iter < max_iter; ++iter) {
+            double xm = 0.5 * (a + b);
+            double tol1 = tol * std::abs(x) + 1e-10;
+            double tol2 = 2.0 * tol1;
+            
+            if (std::abs(x - xm) <= (tol2 - 0.5 * (b - a))) {
+                return x;
+            }
+            
+            if (std::abs(e) > tol1) {
+                double r = (x - w) * (fx - fv);
+                double q = (x - v) * (fx - fw);
+                double p = (x - v) * q - (x - w) * r;
+                q = 2.0 * (q - r);
+                if (q > 0.0) p = -p;
+                q = std::abs(q);
+                double etemp = e;
+                e = d;
+                
+                if (std::abs(p) >= std::abs(0.5 * q * etemp) || p <= q * (a - x) || p >= q * (b - x)) {
+                    d = gold * (e = (x >= xm ? a - x : b - x));
+                } else {
+                    d = p / q;
+                    u = x + d;
+                    if (u - a < tol2 || b - u < tol2) {
+                        d = (xm - x >= 0 ? 1 : -1) * tol1;
+                    }
+                }
+            } else {
+                d = gold * (e = (x >= xm ? a - x : b - x));
+            }
+            
+            u = (std::abs(d) >= tol1 ? x + d : x + (d > 0 ? 1 : -1) * tol1);
+            fu = func(u);
+            
+            if (fu <= fx) {
+                if (u >= x) a = x; else b = x;
+                v = w; w = x; x = u;
+                fv = fw; fw = fx; fx = fu;
+            } else {
+                if (u < x) a = u; else b = u;
+                if (fu <= fw || w == x) {
+                    v = w; w = u;
+                    fv = fw; fw = fu;
+                } else if (fu <= fv || v == x || v == w) {
+                    v = u;
+                    fv = fu;
+                }
+            }
+        }
+        return x;
+    }
+}
 
 /**
  * Computes the Natural Cubic Spline Basis matrix.
@@ -242,12 +368,14 @@ class SplineFitterCpp {
     Eigen::MatrixXd Omega_;
     Eigen::MatrixXd NTW_; 
     Eigen::MatrixXd NTWN_; 
+    Eigen::VectorXd knots_;
+    Eigen::VectorXd alpha_;
     
 public:
     SplineFitterCpp(const Eigen::Ref<const Eigen::VectorXd>& x, 
                     const Eigen::Ref<const Eigen::VectorXd>& knots,
                     py::object weights_obj) {
-        
+        knots_ = knots;
         N_ = compute_natural_spline_basis(x, knots, true, 0);
         Omega_ = compute_penalty_matrix(knots);
         
@@ -284,10 +412,18 @@ public:
              if (solver_ldlt.info() != Eigen::Success) {
                   throw std::runtime_error("Solver failed");
              }
-             return solver_ldlt.solve(RHS);
+             alpha_ = solver_ldlt.solve(RHS);
+        } else {
+             alpha_ = solver.solve(RHS);
         }
         
-        return solver.solve(RHS);
+        return alpha_;
+    }
+
+    Eigen::VectorXd predict(const Eigen::Ref<const Eigen::VectorXd>& x_new) {
+        if (alpha_.size() == 0) throw std::runtime_error("Model not fitted");
+        Eigen::MatrixXd N_new = compute_natural_spline_basis(x_new, knots_);
+        return N_new * alpha_;
     }
     
     double compute_df(double lamval) {
@@ -317,6 +453,25 @@ public:
         return (rss / n) / (denom * denom);
     }
 
+    double solve_for_df(double target_df) {
+        auto func = [&](double log_lam) {
+            double lam = std::pow(10.0, log_lam);
+            return compute_df(lam) - target_df;
+        };
+        
+        double log_lam_opt = brent_root(func, -12.0, 12.0);
+        return std::pow(10.0, log_lam_opt);
+    }
+
+    double solve_gcv(const Eigen::Ref<const Eigen::VectorXd>& y, double min_log_lam = -12.0, double max_log_lam = 12.0) {
+        auto func = [&](double log_lam) {
+            double lam = std::pow(10.0, log_lam);
+            return gcv_score(lam, y);
+        };
+        double log_lam_opt = brent_min(func, min_log_lam, max_log_lam);
+        return std::pow(10.0, log_lam_opt);
+    }
+
     Eigen::MatrixXd get_N() { return N_; }
     Eigen::MatrixXd get_Omega() { return Omega_; }
 };
@@ -329,11 +484,15 @@ class SplineFitterReinschCpp {
     Eigen::SparseMatrix<double> R_;
     Eigen::SparseMatrix<double> M_; // Q^T W^{-1} Q
     Eigen::VectorXd weights_inv_;
+    Eigen::VectorXd x_;
+    Eigen::VectorXd gamma_;
+    Eigen::VectorXd f_;
     long n_;
     
 public:
     SplineFitterReinschCpp(const Eigen::Ref<const Eigen::VectorXd>& x,
                            py::object weights_obj) {
+        x_ = x;
         n_ = x.size();
         
         // Build Q and R
@@ -394,12 +553,13 @@ public:
         solver.compute(LHS);
         if(solver.info() != Eigen::Success) throw std::runtime_error("Reinsch solver failed");
         
-        Eigen::VectorXd gamma = solver.solve(QT_y);
+        gamma_ = solver.solve(QT_y);
         
         // f = y - lam * W^{-1} * Q * gamma
-        Eigen::VectorXd Q_gamma = Q_ * gamma;
+        Eigen::VectorXd Q_gamma = Q_ * gamma_;
         Eigen::VectorXd term = weights_inv_.cwiseProduct(Q_gamma);
-        return y - lamval * term;
+        f_ = y - lamval * term;
+        return f_;
     }
     
     double compute_df(double lamval) {
@@ -461,6 +621,69 @@ public:
         
         return (rss / n) / (denom * denom);
     }
+
+    double solve_for_df(double target_df) {
+        auto func = [&](double log_lam) {
+            double lam = std::pow(10.0, log_lam);
+            return compute_df(lam) - target_df;
+        };
+        double log_lam_opt = brent_root(func, -12.0, 12.0);
+        return std::pow(10.0, log_lam_opt);
+    }
+
+    double solve_gcv(const Eigen::Ref<const Eigen::VectorXd>& y, double min_log_lam = -12.0, double max_log_lam = 12.0) {
+        auto func = [&](double log_lam) {
+            double lam = std::pow(10.0, log_lam);
+            return gcv_score(lam, y);
+        };
+        double log_lam_opt = brent_min(func, min_log_lam, max_log_lam);
+        return std::pow(10.0, log_lam_opt);
+    }
+
+    Eigen::VectorXd predict(const Eigen::Ref<const Eigen::VectorXd>& x_new) {
+        if (f_.size() == 0) throw std::runtime_error("Model not fitted");
+        
+        Eigen::VectorXd M(n_);
+        M[0] = 0.0;
+        M[n_-1] = 0.0;
+        M.segment(1, n_-2) = gamma_;
+        
+        long n_new = x_new.size();
+        Eigen::VectorXd y_pred(n_new);
+        
+        for(long i=0; i<n_new; ++i) {
+            double val = x_new[i];
+            long k = 0;
+            if (val < x_[0]) {
+                k = 0;
+            } else if (val >= x_[n_-1]) {
+                k = n_ - 2;
+            } else {
+                auto it = std::upper_bound(x_.data(), x_.data() + n_, val);
+                k = std::distance(x_.data(), it) - 1;
+                if (k < 0) k = 0;
+                if (k >= n_ - 1) k = n_ - 2;
+            }
+            
+            if (val < x_[0]) {
+                double h = x_[1] - x_[0];
+                double deriv = (f_[1] - f_[0]) / h - h * M[1] / 6.0;
+                y_pred[i] = f_[0] + deriv * (val - x_[0]);
+            } else if (val > x_[n_-1]) {
+                long last_k = n_ - 2;
+                double h = x_[last_k+1] - x_[last_k];
+                double deriv = (f_[last_k+1] - f_[last_k]) / h + M[last_k] * h / 6.0 + M[last_k+1] * h / 3.0;
+                y_pred[i] = f_[n_-1] + deriv * (val - x_[n_-1]);
+            } else {
+                double h = x_[k+1] - x_[k];
+                double term1 = (std::pow(x_[k+1] - val, 3) * M[k] + std::pow(val - x_[k], 3) * M[k+1]) / (6.0 * h);
+                double term2 = (f_[k] - h*h * M[k] / 6.0) * (x_[k+1] - val) / h;
+                double term3 = (f_[k+1] - h*h * M[k+1] / 6.0) * (val - x_[k]) / h;
+                y_pred[i] = term1 + term2 + term3;
+            }
+        }
+        return y_pred;
+    }
 };
 
 PYBIND11_MODULE(_spline_extension, m) {
@@ -488,6 +711,12 @@ PYBIND11_MODULE(_spline_extension, m) {
              py::arg("lamval"))
         .def("gcv_score", &SplineFitterCpp::gcv_score, "Compute GCV score",
              py::arg("lamval"), py::arg("y"))
+        .def("solve_for_df", &SplineFitterCpp::solve_for_df, "Find lambda for target DF",
+             py::arg("target_df"))
+        .def("solve_gcv", &SplineFitterCpp::solve_gcv, "Solve for GCV optimal lambda",
+             py::arg("y"), py::arg("min_log_lam") = -12.0, py::arg("max_log_lam") = 12.0)
+        .def("predict", &SplineFitterCpp::predict, "Predict at new points",
+             py::arg("x_new"))
         .def("get_N", &SplineFitterCpp::get_N)
         .def("get_Omega", &SplineFitterCpp::get_Omega);
 
@@ -502,5 +731,11 @@ PYBIND11_MODULE(_spline_extension, m) {
         .def("compute_df", &SplineFitterReinschCpp::compute_df, "Compute DF",
              py::arg("lamval"))
         .def("gcv_score", &SplineFitterReinschCpp::gcv_score, "Compute GCV score",
-             py::arg("lamval"), py::arg("y"));
+             py::arg("lamval"), py::arg("y"))
+        .def("solve_for_df", &SplineFitterReinschCpp::solve_for_df, "Find lambda for target DF",
+             py::arg("target_df"))
+        .def("solve_gcv", &SplineFitterReinschCpp::solve_gcv, "Solve for GCV optimal lambda",
+             py::arg("y"), py::arg("min_log_lam") = -12.0, py::arg("max_log_lam") = 12.0)
+        .def("predict", &SplineFitterReinschCpp::predict, "Predict at new points",
+             py::arg("x_new"));
 }

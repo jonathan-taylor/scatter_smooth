@@ -1,8 +1,7 @@
 import numpy as np
 import pytest
-from smoothing_spline.fitter import SplineFitter, compute_edf_reinsch
-from smoothing_spline.cpp_fitter import SplineFitterCpp
-
+from smoothing_spline.fitter import SplineFitter
+from tests.spline_fitter import SplineFitter as SplineFitterPy, compute_edf_reinsch
 
 # Setup for R comparison
 try:
@@ -13,23 +12,42 @@ try:
 except ImportError:
     R_ENABLED = False
 
-def test_smoothing_spline_lamval():
+# Check if C++ extension is available for SplineFitter
+try:
+    from smoothing_spline._spline_extension import SplineFitterCpp as ExtSplineFitterCpp
+    CPP_AVAILABLE = True
+except ImportError:
+    CPP_AVAILABLE = False
+
+# Create a fixture to parametrize tests over both implementations
+@pytest.fixture(params=["python", "cpp"])
+def fitter_cls(request):
+    if request.param == "python":
+        return SplineFitterPy
+    elif request.param == "cpp":
+        if not CPP_AVAILABLE:
+            pytest.skip("C++ extension not available")
+        return SplineFitter
+    else:
+        raise ValueError("Invalid fitter type")
+
+def test_smoothing_spline_lamval(fitter_cls):
     rng = np.random.default_rng(0)
     x = np.linspace(0, 1, 100)
     y = np.sin(2 * np.pi * x) + rng.standard_normal(100) * 0.1
     
-    fitter = SplineFitter(x, lamval=0.1)
+    fitter = fitter_cls(x, lamval=0.1)
     fitter.fit(y)
     y_pred = fitter.predict(x)
     
     assert y_pred.shape == x.shape
 
-def test_smoothing_spline_df():
+def test_smoothing_spline_df(fitter_cls):
     rng = np.random.default_rng(1)
     x = np.linspace(0, 1, 100)
     y = np.sin(2 * np.pi * x) + rng.standard_normal(100) * 0.1
     
-    fitter = SplineFitter(x, df=5)
+    fitter = fitter_cls(x, df=5)
     fitter.fit(y)
     y_pred = fitter.predict(x)
     
@@ -39,8 +57,11 @@ def test_smoothing_spline_df():
 def test_reinsch_form_verification():
     """
     Verify the sparse Reinsch form EDF calculation against a dense matrix
-    formulation and cross-check the SplineFitter estimator.
+    formulation and cross-check the SplineFitter estimator (C++).
     """
+    if not CPP_AVAILABLE:
+        pytest.skip("C++ extension not available for main SplineFitter")
+
     rng = np.random.default_rng(0)
     x_small = np.array([0.0, 0.5, 1.2, 1.8, 2.5, 3.0, 3.8, 4.2, 5.0,
                         5.5, 6.2, 7.0, 7.5, 8.2, 9.0])
@@ -92,7 +113,7 @@ def test_reinsch_form_verification():
     np.testing.assert_allclose(islp_pred_new, islp_pred2_new, rtol=1e-6, atol=1e-6)
 
 
-def test_penalized_spline_thinned_knots():
+def test_penalized_spline_thinned_knots(fitter_cls):
     """
     Test that SplineFitter runs with a reduced number of knots.
     """
@@ -101,12 +122,12 @@ def test_penalized_spline_thinned_knots():
     y = np.sin(2 * np.pi * x) + rng.normal(0, 0.1, size=x.shape)
     
     # Fit with a small number of knots
-    penalized_spline = SplineFitter(x, df=6, n_knots=20)
+    penalized_spline = fitter_cls(x, df=6, n_knots=20)
     penalized_spline.fit(y)
     penalized_pred = penalized_spline.predict(x)
     assert penalized_pred.shape == x.shape
 
-def test_natural_spline_extrapolation():
+def test_natural_spline_extrapolation(fitter_cls):
     """
     Verify that SplineFitter correctly performs linear extrapolation.
     """
@@ -114,7 +135,7 @@ def test_natural_spline_extrapolation():
     x = np.linspace(0, 1, 50)
     y = np.sin(4 * np.pi * x) + rng.normal(0, 0.2, size=x.shape)
     
-    natural_spline = SplineFitter(x, df=8)
+    natural_spline = fitter_cls(x, df=8)
     natural_spline.fit(y)
     
     # Test extrapolation
@@ -135,6 +156,9 @@ def test_natural_spline_comparison_with_R(use_weights, has_duplicates, use_df):
     Compare the output of NaturalSpline with R's smooth.spline,
     using all unique x values as knots.
     """
+    if not CPP_AVAILABLE:
+        pytest.skip("C++ extension required for main SplineFitter")
+
     rng = np.random.default_rng(10)
     x = rng.uniform(size=500) * 2 # np.linspace(0, 1, 500) * 2
     if has_duplicates:
@@ -175,20 +199,20 @@ def test_natural_spline_comparison_with_R(use_weights, has_duplicates, use_df):
     np.testing.assert_allclose(islp_pred, r_pred, rtol=1e-3, atol=1e-3)
     np.testing.assert_allclose(islp_fitter.predict(x_pred_new), r_pred_new, rtol=1e-3, atol=1e-3)
 
-def test_solve_gcv():
+def test_solve_gcv(fitter_cls):
     """
-    Test the solve_gcv method of SplineFitterCpp.
+    Test the solve_gcv method of SplineFitter.
     """
+    if fitter_cls == SplineFitterPy:
+        pytest.skip("GCV not implemented in Pure Python fitter")
+        
     rng = np.random.default_rng(42)
     x = np.linspace(0, 10, 100)
     y = np.sin(x) + rng.normal(0, 0.2, 100)
     
     # Fit with GCV
-    try:
-        fitter = SplineFitterCpp(x)
-        best_lam = fitter.solve_gcv(y)
-    except (ImportError, NotImplementedError):
-        pytest.skip("C++ extension not available, skipping GCV test")
+    fitter = fitter_cls(x)
+    best_lam = fitter.solve_gcv(y)
         
     assert best_lam > 0
     assert fitter.lamval == best_lam
@@ -197,5 +221,3 @@ def test_solve_gcv():
     y_pred = fitter.predict(x)
     assert y_pred.shape == x.shape
     assert not np.allclose(y_pred, 0) # Should be a non-trivial fit
-
-
