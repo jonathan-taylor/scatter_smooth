@@ -8,6 +8,7 @@
 #include <cmath>
 #include <functional>
 #include <limits>
+#include <numeric>
 
 namespace py = pybind11;
 
@@ -686,6 +687,114 @@ public:
     }
 };
 
+class LowessFitterCpp {
+    Eigen::VectorXd x_;
+    Eigen::VectorXd w_;
+    Eigen::VectorXd y_;
+    double span_;
+    int degree_;
+    bool fitted_;
+
+public:
+    LowessFitterCpp(const Eigen::Ref<const Eigen::VectorXd>& x,
+                    py::object weights_obj,
+                    double span,
+                    int degree) : x_(x), span_(span), degree_(degree), fitted_(false) {
+        if (weights_obj.is_none()) {
+            w_ = Eigen::VectorXd::Ones(x.size());
+        } else {
+            w_ = weights_obj.cast<Eigen::VectorXd>();
+        }
+    }
+
+    void fit(const Eigen::Ref<const Eigen::VectorXd>& y) {
+        y_ = y;
+        fitted_ = true;
+    }
+    
+    Eigen::VectorXd predict(const Eigen::Ref<const Eigen::VectorXd>& x_new) {
+        if (!fitted_) throw std::runtime_error("Model not fitted");
+
+        long n = x_.size();
+        long k = std::ceil(span_ * n);
+        k = std::max(k, (long)degree_ + 1);
+        
+        long n_new = x_new.size();
+        Eigen::VectorXd y_pred(n_new);
+        
+        // Use a vector of indices to sort
+        std::vector<int> idx(n);
+        
+        for(long i=0; i<n_new; ++i) {
+            double val = x_new[i];
+            
+            // Reset indices
+            std::iota(idx.begin(), idx.end(), 0);
+            
+            // Partial sort to find k nearest neighbors
+            auto dist_comp = [&](int a, int b) {
+                return std::abs(x_[a] - val) < std::abs(x_[b] - val);
+            };
+            
+            std::nth_element(idx.begin(), idx.begin() + k, idx.end(), dist_comp);
+            
+            // Find max distance among the top k neighbors
+            double max_dist = 0;
+            for(int j=0; j<k; ++j) {
+                double d = std::abs(x_[idx[j]] - val);
+                if (d > max_dist) max_dist = d;
+            }
+
+            // Design Matrix X and Weighted Y
+            Eigen::MatrixXd X(k, degree_ + 1);
+            Eigen::VectorXd sqrt_W(k);
+            Eigen::VectorXd Y_sub(k);
+            
+            double total_weight = 0.0;
+
+            for(int j=0; j<k; ++j) {
+                int original_idx = idx[j];
+                double dist = std::abs(x_[original_idx] - val);
+                double u = (max_dist > 1e-10) ? (dist / max_dist) : 0.0;
+                
+                double tri = (u < 1.0) ? std::pow(1.0 - std::pow(u, 3), 3) : 0.0;
+                double w_val = tri * w_[original_idx];
+                sqrt_W[j] = std::sqrt(w_val);
+                total_weight += w_val;
+                
+                Y_sub[j] = y_[original_idx];
+                
+                double x_centered = x_[original_idx] - val;
+                for(int p=0; p<=degree_; ++p) {
+                    X(j, p) = std::pow(x_centered, p);
+                }
+            }
+            
+            if (total_weight < 1e-12) {
+                y_pred[i] = std::numeric_limits<double>::quiet_NaN();
+                continue;
+            }
+            
+            // Weighted LS: (X * sqrt_W) * beta = (Y * sqrt_W)
+            // Scale rows
+            for(int j=0; j<k; ++j) {
+                X.row(j) *= sqrt_W[j];
+                Y_sub[j] *= sqrt_W[j];
+            }
+            
+            // Solve
+            Eigen::ColPivHouseholderQR<Eigen::MatrixXd> dec(X);
+            if (dec.info() == Eigen::Success) {
+                 Eigen::VectorXd beta = dec.solve(Y_sub);
+                 y_pred[i] = beta[0]; // Intercept
+            } else {
+                 y_pred[i] = std::numeric_limits<double>::quiet_NaN();
+            }
+        }
+        return y_pred;
+    }
+};
+
 PYBIND11_MODULE(_spline_extension, m) {
     m.doc() = "C++ implementation of SplineFitter core components"; 
     
@@ -737,5 +846,14 @@ PYBIND11_MODULE(_spline_extension, m) {
         .def("solve_gcv", &SplineFitterReinschCpp::solve_gcv, "Solve for GCV optimal lambda",
              py::arg("y"), py::arg("min_log_lam") = -12.0, py::arg("max_log_lam") = 12.0)
         .def("predict", &SplineFitterReinschCpp::predict, "Predict at new points",
+             py::arg("x_new"));
+
+    py::class_<LowessFitterCpp>(m, "LowessFitterCpp")
+        .def(py::init<const Eigen::Ref<const Eigen::VectorXd>&,
+                      py::object, double, int>(),
+             py::arg("x"), py::arg("weights"), py::arg("span"), py::arg("degree"))
+        .def("fit", &LowessFitterCpp::fit, "Fit the model (store y)",
+             py::arg("y"))
+        .def("predict", &LowessFitterCpp::predict, "Predict at new points",
              py::arg("x_new"));
 }
