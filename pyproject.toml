@@ -21,7 +21,8 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest",
-    "rpy2"
+    "rpy2",
+    "scipy"
 ]
 doc = [
     "myst-parser",
@@ -34,11 +35,6 @@ doc = [
     "ISLP",
     "jupytext",
     "rpy2"
-]
-test = [
-    "pytest",
-    "rpy2",
-    "scipy"
 ]
 
 [build-system]
