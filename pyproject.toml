@@ -33,7 +33,12 @@ doc = [
     "matplotlib",
     "ISLP",
     "jupytext",
+    "rpy2"
+]
+test = [
+    "pytest",
     "rpy2",
+    "scipy"
 ]
 
 [build-system]
