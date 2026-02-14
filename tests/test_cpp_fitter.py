@@ -1,4 +1,3 @@
-
 import numpy as np
 import pytest
 from scipy import sparse
@@ -6,7 +5,7 @@ from scipy.sparse import linalg as splinalg
 from smoothing_spline.fitter import SplineFitter
 
 try:
-    from smoothing_spline._spline_extension import SplineFitterCpp
+    from smoothing_spline._spline_extension import SplineFitterCpp as ExtSplineFitterCpp
     CPP_AVAILABLE = True
 except ImportError:
     CPP_AVAILABLE = False
@@ -34,7 +33,7 @@ def test_cpp_fitter_integration():
     knots_scaled = (knots - x_min) / scale
     
     # 1. Compare exact matrices by passing scaled data to C++
-    cpp_fitter_scaled = SplineFitterCpp(x_scaled, knots_scaled)
+    cpp_fitter_scaled = ExtSplineFitterCpp(x_scaled, knots_scaled)
     cpp_N = cpp_fitter_scaled.get_N()
     cpp_Omega = cpp_fitter_scaled.get_Omega()
     
@@ -45,7 +44,7 @@ def test_cpp_fitter_integration():
     # Python uses scaled lambda and scaled matrices -> invariant objective
     # C++ using raw data should need RAW lambda to get same alpha
     
-    cpp_fitter_raw = SplineFitterCpp(x, knots)
+    cpp_fitter_raw = ExtSplineFitterCpp(x, knots)
     
     lamval = 0.5
     # Python solve
@@ -71,7 +70,7 @@ def test_cpp_fitter_weights():
     py_fitter._prepare_matrices()
     
     # C++ uses raw x, knots
-    cpp_fitter = SplineFitterCpp(x, knots, w)
+    cpp_fitter = ExtSplineFitterCpp(x, knots, w)
     
     lamval = 0.5
     # Python internally scales, so we replicate the math for verification
@@ -98,7 +97,7 @@ def test_cpp_df():
     py_fitter = SplineFitter(x, knots=knots)
     py_fitter._prepare_matrices()
     
-    cpp_fitter = SplineFitterCpp(x, knots)
+    cpp_fitter = ExtSplineFitterCpp(x, knots)
     
     lamval = 0.5
     # Python DF
@@ -112,3 +111,29 @@ def test_cpp_df():
     cpp_df = cpp_fitter.compute_df(lamval)
     
     np.testing.assert_allclose(cpp_df, py_df, atol=1e-5)
+
+@pytest.mark.skipif(not CPP_AVAILABLE, reason="C++ extension not built")
+def test_cpp_prediction():
+    from smoothing_spline.cpp_fitter import SplineFitterCpp
+    rng = np.random.default_rng(102)
+    x = np.sort(rng.uniform(0, 10, 50))
+    y = np.sin(x) + rng.normal(0, 0.1, 50)
+    
+    # Python fit
+    py_fitter = SplineFitter(x, df=5)
+    py_fitter.fit(y)
+    py_pred = py_fitter.predict(x)
+    
+    # C++ fit
+    cpp_fitter = SplineFitterCpp(x, df=5)
+    cpp_fitter.fit(y)
+    cpp_pred = cpp_fitter.predict(x)
+    
+    np.testing.assert_allclose(cpp_pred, py_pred, atol=1e-5)
+    
+    # New data prediction (extrapolation check)
+    x_new = np.linspace(-2, 12, 100)
+    py_pred_new = py_fitter.predict(x_new)
+    cpp_pred_new = cpp_fitter.predict(x_new)
+    
+    np.testing.assert_allclose(cpp_pred_new, py_pred_new, atol=1e-5)

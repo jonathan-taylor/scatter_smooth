@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 from smoothing_spline.fitter import SplineFitter, compute_edf_reinsch
+from smoothing_spline.cpp_fitter import SplineFitterCpp
 
 
 # Setup for R comparison
@@ -176,17 +177,17 @@ def test_natural_spline_comparison_with_R(use_weights, has_duplicates, use_df):
 
 def test_solve_gcv():
     """
-    Test the solve_gcv method of SplineFitter.
+    Test the solve_gcv method of SplineFitterCpp.
     """
     rng = np.random.default_rng(42)
     x = np.linspace(0, 10, 100)
     y = np.sin(x) + rng.normal(0, 0.2, 100)
     
     # Fit with GCV
-    fitter = SplineFitter(x)
     try:
+        fitter = SplineFitterCpp(x)
         best_lam = fitter.solve_gcv(y)
-    except NotImplementedError:
+    except (ImportError, NotImplementedError):
         pytest.skip("C++ extension not available, skipping GCV test")
         
     assert best_lam > 0
