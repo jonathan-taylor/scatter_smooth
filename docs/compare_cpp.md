@@ -14,7 +14,7 @@ kernelspec:
 
 # Performance Comparison: Pure Python vs C++ Extension
 
-This document compares the computational performance of the pure Python implementation (`SplineFitter`) and the C++ optimized implementation (`SplineFitterCpp`) of the smoothing spline fitter.
+This document compares the computational performance of the pure Python implementation (`SplineFitterPy`) and the C++ optimized implementation (`SplineFitter`) of the smoothing spline fitter.
 
 ## Setup
 
@@ -22,8 +22,18 @@ This document compares the computational performance of the pure Python implemen
 import numpy as np
 import matplotlib.pyplot as plt
 import time
+import sys
+import os
+
+# Ensure we can import from tests
+sys.path.append(os.path.abspath('..'))
+
 from smoothing_spline.fitter import SplineFitter
-from smoothing_spline.cpp_fitter import SplineFitterCpp
+try:
+    from tests.spline_fitter import SplineFitter as SplineFitterPy
+except ImportError:
+    print("Could not import pure Python SplineFitter from tests.")
+    SplineFitterPy = None
 
 # Check if C++ extension is available
 try:
@@ -49,15 +59,18 @@ def benchmark_fitters(ns, n_knots=None):
         y = np.sin(x) + rng.normal(0, 0.1, n)
         
         # Pure Python
-        start = time.time()
-        fitter_py = SplineFitter(x, n_knots=n_knots, df=10)
-        fitter_py.fit(y)
-        results['py'].append(time.time() - start)
+        if SplineFitterPy:
+            start = time.time()
+            fitter_py = SplineFitterPy(x, n_knots=n_knots, df=10)
+            fitter_py.fit(y)
+            results['py'].append(time.time() - start)
+        else:
+            results['py'].append(np.nan)
         
-        # C++ Extension
+        # C++ Extension (Main Class)
         if CPP_AVAILABLE:
             start = time.time()
-            fitter_cpp = SplineFitterCpp(x, n_knots=n_knots, df=10)
+            fitter_cpp = SplineFitter(x, n_knots=n_knots, df=10)
             fitter_cpp.fit(y)
             results['cpp'].append(time.time() - start)
         else:
@@ -79,9 +92,10 @@ When $N$ is small, using all unique $x$ values as knots is feasible. However, th
 
 ```{code-cell} ipython3
 fig, ax = plt.subplots(figsize=(10, 6))
-ax.plot(ns, results_all_knots['py'], 'o-', label='Pure Python (SplineFitter)')
+if SplineFitterPy:
+    ax.plot(ns, results_all_knots['py'], 'o-', label='Pure Python (SplineFitterPy)')
 if CPP_AVAILABLE:
-    ax.plot(ns, results_all_knots['cpp'], 's-', label='C++ Extension (SplineFitterCpp)')
+    ax.plot(ns, results_all_knots['cpp'], 's-', label='C++ Extension (SplineFitter)')
 
 ax.set_xlabel('Number of observations (N)')
 ax.set_ylabel('Time (seconds)')
@@ -90,7 +104,7 @@ ax.legend()
 ax.grid(True)
 plt.show()
 
-if CPP_AVAILABLE:
+if CPP_AVAILABLE and SplineFitterPy:
     speedup = [p/c for p, c in zip(results_all_knots['py'], results_all_knots['cpp'])]
     for n, s in zip(ns, speedup):
         print(f"N={n:4d}: Speedup = {s:.2f}x")
@@ -109,7 +123,8 @@ results_fixed_knots = benchmark_fitters(ns_large, n_knots=K)
 
 ```{code-cell} ipython3
 fig, ax = plt.subplots(figsize=(10, 6))
-ax.plot(ns_large, results_fixed_knots['py'], 'o-', label=f'Pure Python (K={K})')
+if SplineFitterPy:
+    ax.plot(ns_large, results_fixed_knots['py'], 'o-', label=f'Pure Python (K={K})')
 if CPP_AVAILABLE:
     ax.plot(ns_large, results_fixed_knots['cpp'], 's-', label=f'C++ Extension (K={K})')
 
@@ -120,7 +135,7 @@ ax.legend()
 ax.grid(True)
 plt.show()
 
-if CPP_AVAILABLE:
+if CPP_AVAILABLE and SplineFitterPy:
     speedup_fixed = [p/c for p, c in zip(results_fixed_knots['py'], results_fixed_knots['cpp'])]
     for n, s in zip(ns_large, speedup_fixed):
         print(f"N={n:5d}: Speedup = {s:.2f}x")
@@ -140,7 +155,7 @@ if CPP_AVAILABLE:
     
     print(f"Benchmarking solve_gcv (N={n}, K={K})...")
     start = time.time()
-    fitter = SplineFitterCpp(x, n_knots=K)
+    fitter = SplineFitter(x, n_knots=K)
     best_lam = fitter.solve_gcv(y)
     cpp_gcv_time = time.time() - start
     print(f"C++ GCV solve time: {cpp_gcv_time:.4f} seconds (best lambda: {best_lam:.4e})")

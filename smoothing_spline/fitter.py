@@ -3,25 +3,105 @@ import numpy as np
 from .base import _BaseSplineFitter
 
 @dataclass
-class SplineFitter(_BaseSplineFitter):
+class SplineFitter:
     """
     SplineFitter implementation using C++ extension for performance.
     """
+
+    x: np.ndarray
+    w: np.ndarray = None
+    lamval: float = None
+    df: int = None
+    knots: np.ndarray = None
+    n_knots: int = None
     _cpp_fitter: object = field(init=False, default=None, repr=False)
+
+
+    def __post_init__(self):
+        self._prepare_matrices()
+        if self.df is not None:
+            self.lamval = self._find_lamval_for_df(self.df)
+        elif self.lamval is None:
+            self.lamval = 0.0
+
+    def _prepare_matrices(self):
+        raise NotImplementedError
+
+    def _find_lamval_for_df(self, df):
+        raise NotImplementedError
+
+    def _setup_scaling_and_knots(self):
+        """
+        Compute the scaled values and knots required for both
+        fitting and EDF calculation.
+        """
+        x = self.x
+        weights = self.w
+        knots = self.knots
+        n_knots = self.n_knots
+        
+        n = len(x)
+        if weights is None: weights = np.ones(n)
+        
+        if knots is None:
+            if n_knots is not None:
+                percs = np.linspace(0, 100, n_knots)
+                knots = np.percentile(x, percs)
+            else:
+                knots = np.sort(np.unique(x))
+        else:
+            knots = np.asarray(knots)
+            knots.sort()
+            
+        self.knots = knots
+        n_k = len(knots)
+        self.n_k_ = n_k
+
+        # --- Standardization / Scaling ---
+        x_min, x_max = x.min(), x.max()
+        scale = x_max - x_min if x_max > x_min else 1.0
+        self.x_min_ = x_min
+        self.x_scale_ = scale
+
+        x_scaled = (x - x_min) / scale
+        knots_scaled = (knots - x_min) / scale
+        self.knots_scaled_ = knots_scaled
+        return x_scaled, knots_scaled
 
     def _prepare_matrices(self):
         """
         Initialize the C++ extension fitter.
         """
         from smoothing_spline._spline_extension import SplineFitterCpp as _ExtSplineFitterCpp
+        from smoothing_spline._spline_extension import SplineFitterReinschCpp as _ExtSplineFitterReinschCpp
+        
         x_scaled, knots_scaled = self._setup_scaling_and_knots()
-        self._cpp_fitter = _ExtSplineFitterCpp(x_scaled, knots_scaled, self.w)
-        self.N_ = self._cpp_fitter.get_N()
-        self.Omega_ = self._cpp_fitter.get_Omega()
-        if self.w is not None:
-            self.NTW_ = self.N_.T * self.w
+        
+        # Check if we can use the efficient Reinsch algorithm (knots == unique(x))
+        # np.unique returns sorted unique elements
+        unique_x, inverse = np.unique(x_scaled, return_inverse=True)
+        
+        if len(knots_scaled) == len(unique_x) and np.allclose(knots_scaled, unique_x):
+            self._use_reinsch = True
+            self._inverse_indices = inverse
+            
+            # Aggregate weights for Reinsch
+            w_raw = self.w if self.w is not None else np.ones(len(x_scaled))
+            w_agg = np.bincount(inverse, weights=w_raw)
+            
+            self._cpp_fitter = _ExtSplineFitterReinschCpp(knots_scaled, w_agg)
+            
+            # For Reinsch, N and Omega are implicit or managed differently, but we expose properties if needed
+            # For now, we don't expose N_ and Omega_ for Reinsch path in python as they are not used
         else:
-            self.NTW_ = self.N_.T
+            self._use_reinsch = False
+            self._cpp_fitter = _ExtSplineFitterCpp(x_scaled, knots_scaled, self.w)
+            self.N_ = self._cpp_fitter.get_N()
+            self.Omega_ = self._cpp_fitter.get_Omega()
+            if self.w is not None:
+                self.NTW_ = self.N_.T * self.w
+            else:
+                self.NTW_ = self.N_.T
 
     def _find_lamval_for_df(self, target_df, log10_lam_bounds=(-12, 12)):
         """
@@ -51,6 +131,15 @@ class SplineFitter(_BaseSplineFitter):
             self.update_weights(sample_weight)
         y_arr = np.asarray(y)
         
+        if hasattr(self, '_use_reinsch') and self._use_reinsch:
+             w_raw = self.w if self.w is not None else np.ones(len(y_arr))
+             # w_agg is already in fitter, but we need it for y_agg
+             w_agg = np.bincount(self._inverse_indices, weights=w_raw)
+             y_sum = np.bincount(self._inverse_indices, weights=y_arr * w_raw)
+             y_eff = y_sum / w_agg
+        else:
+             y_eff = y_arr
+        
         if hasattr(self._cpp_fitter, "solve_gcv"):
              # Adjust bounds for C++ which works on scaled lambda
              shift = 3 * np.log10(self.x_scale_)
@@ -58,7 +147,7 @@ class SplineFitter(_BaseSplineFitter):
              max_log = log10_lam_bounds[1] - shift
              
              try:
-                 lam_scaled = self._cpp_fitter.solve_gcv(y_arr, min_log, max_log)
+                 lam_scaled = self._cpp_fitter.solve_gcv(y_eff, min_log, max_log)
                  self.lamval = lam_scaled * (self.x_scale_ ** 3)
                  self.fit(y)
                  return self.lamval
@@ -82,7 +171,17 @@ class SplineFitter(_BaseSplineFitter):
         if self.lamval is None:
              self.lamval = 0.0
         lam_scaled = self.lamval / self.x_scale_**3
-        self.alpha_ = self._cpp_fitter.fit(y, lam_scaled)
+        
+        y_arr = np.asarray(y)
+        if hasattr(self, '_use_reinsch') and self._use_reinsch:
+             w_raw = self.w if self.w is not None else np.ones(len(y_arr))
+             w_agg = np.bincount(self._inverse_indices, weights=w_raw)
+             y_sum = np.bincount(self._inverse_indices, weights=y_arr * w_raw)
+             y_eff = y_sum / w_agg
+             
+             self._cpp_fitter.fit(y_eff, lam_scaled)
+        else:
+             self._cpp_fitter.fit(y_arr, lam_scaled)
 
         y_hat = self.predict(self.x)
         if self.w is not None:
@@ -108,17 +207,18 @@ class SplineFitter(_BaseSplineFitter):
         np.ndarray
             The predicted response.
         """
-        from smoothing_spline._spline_extension import compute_natural_spline_basis
         x_scaled = (x - self.x_min_) / self.x_scale_
-        
-        # compute_natural_spline_basis returns the basis matrix N
-        # We assume extrapolate_linear=True (default in C++)
-        N_new = compute_natural_spline_basis(x_scaled, self.knots_scaled_)
-        
-        # Prediction is N * alpha
-        return N_new @ self.alpha_
+        return self._cpp_fitter.predict(x_scaled)
 
-    def update_weights(self, w):
+    @property
+    def nonlinear_(self):
+        """
+        The non-linear component of the fitted spline.
+        """
+        linear_part = self.coef_ * self.x + self.intercept_
+        return self.predict(self.x) - linear_part
+
+    def update_weights(self, w, update_lamval=False):
         """
         Update the weights and refit the model using C++.
         """
@@ -127,7 +227,5 @@ class SplineFitter(_BaseSplineFitter):
              self._cpp_fitter.update_weights(self.w)
         else:
              self._prepare_matrices()
-        if self.df is not None:
+        if self.df is not None and update_lamval:
             self.lamval = self._find_lamval_for_df(self.df)
-        if hasattr(self, 'y'):
-            self.fit(self.y)
