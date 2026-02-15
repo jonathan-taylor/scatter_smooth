@@ -513,6 +513,16 @@ public:
         auto func = [&](double log_lam) { return gcv_score(std::pow(10.0, log_lam), y); };
         return std::pow(10.0, brent_min(func, min_log_lam, max_log_lam));
     }
+    double compute_df_sparse(double lamval) {
+        Eigen::SparseMatrix<double> LHS = R_ + lamval * M_;
+        Eigen::MatrixXd LHS_dense = LHS;
+        Eigen::MatrixXd M_dense = M_;
+        Eigen::LLT<Eigen::MatrixXd> solver;
+        solver.compute(LHS_dense);
+        if(solver.info() != Eigen::Success) return 0.0;
+        Eigen::MatrixXd Sol = solver.solve(M_dense);
+        return (double)n_ - lamval * Sol.trace();
+    }
     Eigen::VectorXd predict(const Eigen::Ref<const Eigen::VectorXd>& x_new, int deriv=0) {
         Eigen::VectorXd M_c(n_); M_c[0] = 0.0; M_c[n_-1] = 0.0; M_c.segment(1, n_-2) = gamma_;
         Eigen::VectorXd y_p(x_new.size());
@@ -699,8 +709,39 @@ public:
 };
 
 PYBIND11_MODULE(_spline_extension, m) {
-    py::class_<SplineFitterCpp>(m, "SplineFitterCpp").def(py::init<const Eigen::Ref<const Eigen::VectorXd>&, const Eigen::Ref<const Eigen::VectorXd>&, py::object>()).def("fit", &SplineFitterCpp::fit).def("update_weights", &SplineFitterCpp::update_weights).def("compute_df", &SplineFitterCpp::compute_df).def("gcv_score", &SplineFitterCpp::gcv_score).def("solve_for_df", &SplineFitterCpp::solve_for_df).def("solve_gcv", &SplineFitterCpp::solve_gcv).def("predict", &SplineFitterCpp::predict).def("get_N", &SplineFitterCpp::get_N).def("get_Omega", &SplineFitterCpp::get_Omega);
-    py::class_<SplineFitterReinschCpp>(m, "SplineFitterReinschCpp").def(py::init<const Eigen::Ref<const Eigen::VectorXd>&, py::object>()).def("fit", &SplineFitterReinschCpp::fit).def("update_weights", &SplineFitterReinschCpp::update_weights).def("compute_df", &SplineFitterReinschCpp::compute_df).def("gcv_score", &SplineFitterReinschCpp::gcv_score).def("solve_for_df", &SplineFitterReinschCpp::solve_for_df).def("solve_gcv", &SplineFitterReinschCpp::solve_gcv).def("predict", &SplineFitterReinschCpp::predict);
-    py::class_<CubicSplineTraceCpp>(m, "CubicSplineTraceCpp").def(py::init<const Eigen::Ref<const Eigen::VectorXd>&, py::object>()).def("compute_trace", &CubicSplineTraceCpp::compute_trace);
+    py::class_<SplineFitterCpp>(m, "SplineFitterCpp")
+        .def(py::init<const Eigen::Ref<const Eigen::VectorXd>&, const Eigen::Ref<const Eigen::VectorXd>&, py::object>(),
+             py::arg("x"), py::arg("knots"), py::arg("weights_obj") = py::none())
+        .def("fit", &SplineFitterCpp::fit)
+        .def("update_weights", &SplineFitterCpp::update_weights)
+        .def("compute_df", &SplineFitterCpp::compute_df)
+        .def("gcv_score", &SplineFitterCpp::gcv_score)
+        .def("solve_for_df", &SplineFitterCpp::solve_for_df)
+        .def("solve_gcv", &SplineFitterCpp::solve_gcv)
+        .def("predict", &SplineFitterCpp::predict)
+        .def("get_N", &SplineFitterCpp::get_N)
+        .def("get_Omega", &SplineFitterCpp::get_Omega);
+
+    py::class_<SplineFitterReinschCpp>(m, "SplineFitterReinschCpp")
+        .def(py::init<const Eigen::Ref<const Eigen::VectorXd>&, py::object>(),
+             py::arg("x"), py::arg("weights") = py::none())
+        .def("fit", &SplineFitterReinschCpp::fit)
+        .def("update_weights", &SplineFitterReinschCpp::update_weights)
+        .def("compute_df", &SplineFitterReinschCpp::compute_df)
+        .def("compute_df_sparse", &SplineFitterReinschCpp::compute_df_sparse)
+        .def("gcv_score", &SplineFitterReinschCpp::gcv_score)
+        .def("solve_for_df", &SplineFitterReinschCpp::solve_for_df)
+        .def("solve_gcv", &SplineFitterReinschCpp::solve_gcv)
+        .def("predict", &SplineFitterReinschCpp::predict);
+
+    py::class_<CubicSplineTraceCpp>(m, "CubicSplineTraceCpp")
+        .def(py::init<const Eigen::Ref<const Eigen::VectorXd>&, py::object>(),
+             py::arg("x"), py::arg("weights_obj") = py::none())
+        .def("compute_trace", &CubicSplineTraceCpp::compute_trace);
+
     py::class_<SplineFitterBSpline>(m, "SplineFitterBSpline").def(py::init<const Eigen::Ref<const Eigen::VectorXd>&, const Eigen::Ref<const Eigen::VectorXd>&, py::object, int>()).def("fit", &SplineFitterBSpline::fit).def("predict", &SplineFitterBSpline::predict).def("get_NTWN", &SplineFitterBSpline::get_NTWN).def("get_Omega", &SplineFitterBSpline::get_Omega).def("get_knots", &SplineFitterBSpline::get_knots).def("eval_basis", &SplineFitterBSpline::eval_basis, py::arg("x_val"), py::arg("deriv")=0);
+    
+    m.def("compute_natural_spline_basis", &compute_natural_spline_basis,
+          py::arg("x"), py::arg("knots"), py::arg("extrapolate_linear") = true, py::arg("derivative_order") = 0);
+    m.def("compute_penalty_matrix", &compute_penalty_matrix, py::arg("knots"));
 }
