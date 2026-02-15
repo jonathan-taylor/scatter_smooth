@@ -12,7 +12,7 @@
 namespace py = pybind11;
 
 namespace {
-    double brent_root(std::function<double(double)> func, double a, double b, double tol=1e-6, int max_iter=100) {
+    double brent_root(std::function<double(double)> func, double a, double b, double tol=1e-6, int max_iter=20) {
         double fa = func(a);
         double fb = func(b);
         if (fa * fb > 0) {
@@ -72,7 +72,7 @@ namespace {
     }
 
     // Brent's method for minimization
-    double brent_min(std::function<double(double)> func, double a, double b, double tol=1e-5, int max_iter=100) {
+    double brent_min(std::function<double(double)> func, double a, double b, double tol=1e-5, int max_iter=20) {
         double x, w, v, fx, fw, fv;
         double d = 0.0, e = 0.0;
         double u, fu;
@@ -477,22 +477,77 @@ public:
 };
 
 class CubicSplineTraceCpp {
+    Eigen::VectorXd x_;
+    int n_;
+    Eigen::VectorXd h_;
+    Eigen::VectorXd weights_inv_;
+
+    Eigen::VectorXd R_diag, R_off;
+    Eigen::VectorXd M_diag, M_off1, M_off2;
+
+    void compute_QR_bands() {
+        int n_inner = n_ - 2;
+        
+        // R bands
+        R_diag.resize(n_inner);
+        R_off.resize(n_inner - 1);
+        for (int i = 0; i < n_inner; ++i) {
+            R_diag(i) = (h_(i) + h_(i + 1)) / 3.0;
+        }
+        for (int i = 0; i < n_inner - 1; ++i) {
+            R_off(i) = h_(i + 1) / 6.0;
+        }
+
+        // M = Q^T W^-1 Q bands
+        M_diag.resize(n_inner);
+        M_off1.resize(n_inner - 1);
+        M_off2.resize(n_inner - 2);
+
+        Eigen::VectorXd inv_h_j = h_.head(n_inner).cwiseInverse();
+        Eigen::VectorXd inv_h_j_plus_1 = h_.tail(n_inner).cwiseInverse();
+        Eigen::VectorXd q1_vals = -(inv_h_j + inv_h_j_plus_1);
+
+        // Diagonal M_jj
+        M_diag = (inv_h_j.array().square() * weights_inv_.head(n_inner).array()) +
+                 (q1_vals.array().square() * weights_inv_.segment(1, n_inner).array()) +
+                 (inv_h_j_plus_1.array().square() * weights_inv_.segment(2, n_inner).array());
+
+        // Off-diagonal 1: M_j,j+1
+        M_off1 = (q1_vals.head(n_inner - 1).array() * inv_h_j.tail(n_inner - 1).array() * weights_inv_.segment(1, n_inner - 1).array()) +
+                 (inv_h_j_plus_1.head(n_inner - 1).array() * q1_vals.tail(n_inner - 1).array() * weights_inv_.segment(2, n_inner - 1).array());
+
+        // Off-diagonal 2: M_j,j+2
+        M_off2 = (inv_h_j_plus_1.head(n_inner - 2).array() * inv_h_j.tail(n_inner - 2).array() * weights_inv_.segment(2, n_inner - 2).array());
+    }
+
 public:
-    CubicSplineTraceCpp(const Eigen::VectorXd& x) {
-        this->x = x;
-        this->n = x.size();
-        if (n < 4) {
+    CubicSplineTraceCpp(const Eigen::Ref<const Eigen::VectorXd>& x, py::object weights_obj) {
+        x_ = x;
+        n_ = x.size();
+        if (n_ < 4) {
             throw std::invalid_argument("Need at least 4 points for cubic spline smoothing.");
         }
-        h.resize(n - 1);
-        for (int i = 0; i < n - 1; ++i) {
-            h(i) = x(i + 1) - x(i);
+        h_.resize(n_ - 1);
+        for (int i = 0; i < n_ - 1; ++i) {
+            h_(i) = x_(i + 1) - x_(i);
         }
+
+        weights_inv_.resize(n_);
+        if (weights_obj.is_none()) {
+            weights_inv_.setOnes();
+        } else {
+            Eigen::VectorXd w = weights_obj.cast<Eigen::VectorXd>();
+            if (w.size() != n_) {
+                throw std::invalid_argument("Weights array must have the same length as x.");
+            }
+            weights_inv_ = w.cwiseInverse();
+        }
+
         compute_QR_bands();
     }
 
     double compute_trace(double lam) {
-        int n_inner = n - 2;
+        int n_inner = n_ - 2;
 
         // Construct B = R + lam * M
         Eigen::VectorXd B_diag = R_diag + lam * M_diag;
@@ -565,41 +620,6 @@ public:
         }
         
         return 2.0 + tr_RBinv;
-    }
-
-private:
-    Eigen::VectorXd x;
-    int n;
-    Eigen::VectorXd h;
-
-    Eigen::VectorXd R_diag, R_off;
-    Eigen::VectorXd M_diag, M_off1, M_off2;
-
-    void compute_QR_bands() {
-        int n_inner = n - 2;
-        
-        // R bands
-        R_diag.resize(n_inner);
-        R_off.resize(n_inner - 1);
-        for (int i = 0; i < n_inner; ++i) {
-            R_diag(i) = (h(i) + h(i + 1)) / 3.0;
-        }
-        for (int i = 0; i < n_inner - 1; ++i) {
-            R_off(i) = h(i + 1) / 6.0;
-        }
-
-        // M = Q^T Q bands
-        M_diag.resize(n_inner);
-        M_off1.resize(n_inner - 1);
-        M_off2.resize(n_inner - 2);
-
-        Eigen::VectorXd q0_val = h.head(n_inner).cwiseInverse();
-        Eigen::VectorXd q2_val = h.tail(n_inner).cwiseInverse();
-        Eigen::VectorXd q1_val = -(h.head(n_inner).cwiseInverse() + h.tail(n_inner).cwiseInverse());
-
-        M_diag = q0_val.array().square() + q1_val.array().square() + q2_val.array().square();
-        M_off1 = q1_val.head(n_inner - 1).array() * q0_val.tail(n_inner - 1).array() + q2_val.head(n_inner - 1).array() * q1_val.tail(n_inner - 1).array();
-        M_off2 = q2_val.head(n_inner - 2).array() * q0_val.tail(n_inner - 2).array();
     }
 };
 
@@ -715,7 +735,9 @@ public:
     }
 
     double compute_df(double lamval) {
-        CubicSplineTraceCpp trace_solver(x_);
+        Eigen::VectorXd original_weights = weights_inv_.cwiseInverse(); // Convert to concrete Eigen::VectorXd
+        py::object weights_obj = py::cast(original_weights); // Cast to py::object
+        CubicSplineTraceCpp trace_solver(x_, weights_obj); // Pass original weights to trace solver
         return trace_solver.compute_trace(lamval);
     }
     
@@ -760,10 +782,6 @@ public:
             return compute_df(lam) - target_df;
         };
         double log_lam_opt = brent_root(func, -12.0, 12.0);
-	double df_sparse = compute_df_sparse(std::pow(10.0, log_lam_opt)); // Call the other function explicitly for comparison
-        std::cout << "DF from compute_df_sparse: " << df_sparse << std::endl;
-        double df_exact = compute_df(std::pow(10.0, log_lam_opt)); // Call the other function explicitly for comparison
-        std::cout << "DF from compute_df (exact trace): " << df_exact << std::endl;
         return std::pow(10.0, log_lam_opt);
     }
 
@@ -902,7 +920,8 @@ PYBIND11_MODULE(_spline_extension, m) {
              py::arg("x_new"), py::arg("deriv")=0);
 
     py::class_<CubicSplineTraceCpp>(m, "CubicSplineTraceCpp")
-        .def(py::init<const Eigen::VectorXd&>(), py::arg("x"))
+        .def(py::init<const Eigen::Ref<const Eigen::VectorXd>&, py::object>(), 
+             py::arg("x"), py::arg("weights") = py::none())
         .def("compute_trace", &CubicSplineTraceCpp::compute_trace, "Compute trace for a given lambda",
              py::arg("lam"));
 }

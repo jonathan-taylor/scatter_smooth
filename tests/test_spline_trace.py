@@ -39,4 +39,3 @@ def test_unweighted_trace_cpp_agreement(lam):
     np.testing.assert_allclose(df_fast_cpp, df_basis_all_knots, atol=1e-4)
     np.testing.assert_allclose(df_fast_cpp, df_sparse_solve, atol=1e-4)
 
-    return df_fast_cpp, df_sparse_solve, df_basis_all_knots
