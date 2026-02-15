@@ -141,7 +141,6 @@ def test_natural_spline_comparison_with_R(use_weights, has_duplicates, use_df):
     using all unique x values as knots.
     """
 
-
     rng = np.random.default_rng(10)
     x = rng.uniform(size=500) * 2 # np.linspace(0, 1, 500) * 2
     if has_duplicates:

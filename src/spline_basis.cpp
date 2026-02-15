@@ -476,6 +476,133 @@ public:
     Eigen::MatrixXd get_Omega() { return Omega_; }
 };
 
+class CubicSplineTraceCpp {
+public:
+    CubicSplineTraceCpp(const Eigen::VectorXd& x) {
+        this->x = x;
+        this->n = x.size();
+        if (n < 4) {
+            throw std::invalid_argument("Need at least 4 points for cubic spline smoothing.");
+        }
+        h.resize(n - 1);
+        for (int i = 0; i < n - 1; ++i) {
+            h(i) = x(i + 1) - x(i);
+        }
+        compute_QR_bands();
+    }
+
+    double compute_trace(double lam) {
+        int n_inner = n - 2;
+
+        // Construct B = R + lam * M
+        Eigen::VectorXd B_diag = R_diag + lam * M_diag;
+        B_diag.array() += 1e-9; // Add a small epsilon for numerical stability
+        Eigen::VectorXd B_off1 = R_off + lam * M_off1;
+        Eigen::VectorXd B_off2 = lam * M_off2;
+        
+        // Eigen's BandMatrix is not available in the standard library.
+        // For simplicity, we can represent the pentadiagonal matrix B
+        // and perform Cholesky decomposition.
+        // However, a full matrix would be O(N^3).
+        // To maintain O(N), we need a banded Cholesky solver.
+        // Let's implement a simple banded Cholesky for a pentadiagonal matrix.
+
+        // Packed format for banded Cholesky (lower triangular part)
+        // L_banded(0, i) = L_ii
+        // L_banded(1, i) = L_{i+1, i}
+        // L_banded(2, i) = L_{i+2, i}
+        Eigen::MatrixXd L_banded = Eigen::MatrixXd::Zero(3, n_inner);
+
+        for (int i = 0; i < n_inner; ++i) {
+            double l_ii_sq = B_diag(i);
+            if (i > 0) l_ii_sq -= std::pow(L_banded(1, i-1), 2);
+            if (i > 1) l_ii_sq -= std::pow(L_banded(2, i-2), 2);
+            
+            if (l_ii_sq <= 0) {
+                 return std::numeric_limits<double>::quiet_NaN();
+            }
+            L_banded(0, i) = std::sqrt(l_ii_sq);
+
+            if (i < n_inner - 1) {
+                double l_i1_i = B_off1(i);
+                if (i > 0) l_i1_i -= L_banded(1, i-1) * L_banded(2, i-1);
+                L_banded(1, i) = l_i1_i / L_banded(0, i);
+            }
+            if (i < n_inner - 2) {
+                L_banded(2, i) = B_off2(i) / L_banded(0, i);
+            }
+        }
+        
+        // Takahashi's equations for B^-1
+        Eigen::VectorXd Inv_diag = Eigen::VectorXd::Zero(n_inner);
+        Eigen::VectorXd Inv_off1 = Eigen::VectorXd::Zero(n_inner - 1);
+        
+        for (int i = n_inner - 1; i >= 0; --i) {
+            double val = 1.0 / L_banded(0, i);
+            double sum_diag = 0.0;
+
+            if (i + 1 < n_inner) {
+                double s_off = L_banded(1, i) * Inv_diag(i + 1);
+                if (i + 2 < n_inner) {
+                    s_off += L_banded(2, i) * Inv_off1(i + 1);
+                }
+                Inv_off1(i) = -val * s_off;
+                sum_diag += L_banded(1, i) * Inv_off1(i);
+            }
+
+            if (i + 2 < n_inner) {
+                double s_off2 = L_banded(1, i) * Inv_off1(i + 1) + L_banded(2, i) * Inv_diag(i + 2);
+                double X_i_i2 = -val * s_off2;
+                sum_diag += L_banded(2, i) * X_i_i2;
+            }
+            Inv_diag(i) = val * (val - sum_diag);
+        }
+
+        // Final Trace Calculation
+        double tr_RBinv = (R_diag.array() * Inv_diag.array()).sum();
+        if (n_inner > 1) {
+            tr_RBinv += 2 * (R_off.array() * Inv_off1.array()).sum();
+        }
+        
+        return 2.0 + tr_RBinv;
+    }
+
+private:
+    Eigen::VectorXd x;
+    int n;
+    Eigen::VectorXd h;
+
+    Eigen::VectorXd R_diag, R_off;
+    Eigen::VectorXd M_diag, M_off1, M_off2;
+
+    void compute_QR_bands() {
+        int n_inner = n - 2;
+        
+        // R bands
+        R_diag.resize(n_inner);
+        R_off.resize(n_inner - 1);
+        for (int i = 0; i < n_inner; ++i) {
+            R_diag(i) = (h(i) + h(i + 1)) / 3.0;
+        }
+        for (int i = 0; i < n_inner - 1; ++i) {
+            R_off(i) = h(i + 1) / 6.0;
+        }
+
+        // M = Q^T Q bands
+        M_diag.resize(n_inner);
+        M_off1.resize(n_inner - 1);
+        M_off2.resize(n_inner - 2);
+
+        Eigen::VectorXd q0_val = h.head(n_inner).cwiseInverse();
+        Eigen::VectorXd q2_val = h.tail(n_inner).cwiseInverse();
+        Eigen::VectorXd q1_val = -(h.head(n_inner).cwiseInverse() + h.tail(n_inner).cwiseInverse());
+
+        M_diag = q0_val.array().square() + q1_val.array().square() + q2_val.array().square();
+        M_off1 = q1_val.head(n_inner - 1).array() * q0_val.tail(n_inner - 1).array() + q2_val.head(n_inner - 1).array() * q1_val.tail(n_inner - 1).array();
+        M_off2 = q2_val.head(n_inner - 2).array() * q0_val.tail(n_inner - 2).array();
+    }
+};
+
 /**
  * Reinsch Form Fitter (O(N))
  */
@@ -562,7 +689,7 @@ public:
         return f_;
     }
     
-    double compute_df(double lamval) {
+    double compute_df_sparse(double lamval) {
         Eigen::SparseMatrix<double> LHS = R_ + lamval * M_;
         Eigen::SimplicialLLT<Eigen::SparseMatrix<double>> solver;
         solver.compute(LHS);
@@ -585,6 +712,11 @@ public:
         
         long n = weights_inv_.size(); 
         return n - trace_val;
+    }
+
+    double compute_df(double lamval) {
+        CubicSplineTraceCpp trace_solver(x_);
+        return trace_solver.compute_trace(lamval);
     }
     
     double compute_df_hutchinson(Eigen::SimplicialLLT<Eigen::SparseMatrix<double>>& solver, 
@@ -614,7 +746,7 @@ public:
         Eigen::VectorXd w = weights_inv_.cwiseInverse();
         double rss = (resid.array().square() * w.array()).sum();
         
-        double df = compute_df(lamval);
+        double df = compute_df_sparse(lamval);
         double n = (double)y.size();
         double denom = 1.0 - df / n;
         if (denom < 1e-6) return 1e20;
@@ -625,7 +757,7 @@ public:
     double solve_for_df(double target_df) {
         auto func = [&](double log_lam) {
             double lam = std::pow(10.0, log_lam);
-            return compute_df(lam) - target_df;
+            return compute_df_sparse(lam) - target_df;
         };
         double log_lam_opt = brent_root(func, -12.0, 12.0);
         return std::pow(10.0, log_lam_opt);
@@ -754,6 +886,8 @@ PYBIND11_MODULE(_spline_extension, m) {
              py::arg("weights"))
         .def("compute_df", &SplineFitterReinschCpp::compute_df, "Compute DF",
              py::arg("lamval"))
+        .def("compute_df_sparse", &SplineFitterReinschCpp::compute_df_sparse, "Compute DF using sparse solve",
+             py::arg("lamval"))
         .def("gcv_score", &SplineFitterReinschCpp::gcv_score, "Compute GCV score",
              py::arg("lamval"), py::arg("y"))
         .def("solve_for_df", &SplineFitterReinschCpp::solve_for_df, "Find lambda for target DF",
@@ -762,4 +896,9 @@ PYBIND11_MODULE(_spline_extension, m) {
              py::arg("y"), py::arg("min_log_lam") = -12.0, py::arg("max_log_lam") = 12.0)
         .def("predict", &SplineFitterReinschCpp::predict, "Predict at new points",
              py::arg("x_new"), py::arg("deriv")=0);
+
+    py::class_<CubicSplineTraceCpp>(m, "CubicSplineTraceCpp")
+        .def(py::init<const Eigen::VectorXd&>(), py::arg("x"))
+        .def("compute_trace", &CubicSplineTraceCpp::compute_trace, "Compute trace for a given lambda",
+             py::arg("lam"));
 }
