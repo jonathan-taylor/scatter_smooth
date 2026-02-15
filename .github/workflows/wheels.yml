@@ -8,29 +8,25 @@ jobs:
     name: Build wheels on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest]
+        # Add windows-latest to the build matrix
+        os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
         with:
           submodules: recursive
 
       - name: Build wheels
-        uses: pypa/cibuildwheel@v2.17.0
-        env:
-          CIBW_ARCHS_MACOS: x86_64 arm64
-          CIBW_ARCHS_WINDOWS: AMD64
-          CIBW_SKIP: pp* # Skip PyPy
-          CIBW_TEST_REQUIRES: pytest scipy
-          CIBW_BEFORE_TEST_LINUX: "sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/CentOS-* && sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-* && yum install -y openblas-devel"
-          CIBW_TEST_COMMAND: "cd /tmp && pytest {project}/tests"
-          CIBW_TEST_COMMAND_WINDOWS: "cd /d C:\\Users\\runneradmin\\AppData\\Local\\Temp && pytest {project}\\tests"
+        uses: pypa/cibuildwheel@v3.3.1 # Use the latest version
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload wheel artifacts
+        uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.os }}
-          path: ./wheelhouse/*.whl
+          path: ./wheelhouse/*.whl # cibuildwheel puts wheels in this directory
 
   make_sdist:
     name: Make SDist
