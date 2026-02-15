@@ -134,8 +134,8 @@ def test_natural_spline_extrapolation(fitter_cls):
 @pytest.mark.skipif(not R_ENABLED, reason="R or rpy2 is not installed")
 @pytest.mark.parametrize(
     "use_weights, has_duplicates, use_df",
-    [(False, False, True), (True, False, True), (False, True, True), (True, True, True)]
-)def test_natural_spline_comparison_with_R(use_weights, has_duplicates, use_df):
+    [(False, False, True), (True, False, True), (False, True, True), (True, True, True)])
+def test_natural_spline_comparison_with_R(use_weights, has_duplicates, use_df):
     """
     Compare the output of NaturalSpline with R's smooth.spline,
     using all unique x values as knots.
