@@ -11,6 +11,8 @@ ext_modules = [
         # Example: passing in the version
         define_macros = [('VERSION_INFO', '"0.0.1"')],
         include_dirs = ["src/eigen"],
+        libraries = ['lapack', 'blas'] if sys.platform == 'darwin' else [],
+        extra_link_args = ['-framework', 'Accelerate'] if sys.platform == 'darwin' else [],
     ),
 ]
 

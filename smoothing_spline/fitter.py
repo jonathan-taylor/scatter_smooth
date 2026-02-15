@@ -234,3 +234,100 @@ class SplineFitter:
              self._prepare_matrices()
         if self.df is not None and update_lamval:
             self.lamval = self._find_lamval_for_df(self.df)
+
+@dataclass
+class SplineFitterBSpline:
+    """
+    SplineFitter implementation using B-splines and LAPACK DBPSV.
+    """
+
+    x: np.ndarray
+    w: np.ndarray = None
+    lamval: float = None
+    knots: np.ndarray = None
+    n_knots: int = None
+    order: int = 4
+    _cpp_fitter: object = field(init=False, default=None, repr=False)
+
+    def __post_init__(self):
+        self._prepare_matrices()
+
+    def _setup_scaling_and_knots(self):
+        """
+        Compute the scaled values and knots required for both
+        fitting and EDF calculation.
+        """
+        x = self.x
+        weights = self.w
+        knots = self.knots
+        n_knots = self.n_knots
+        
+        n = len(x)
+        if weights is None: weights = np.ones(n)
+        
+        if knots is None:
+            if n_knots is not None:
+                percs = np.linspace(0, 100, n_knots)
+                knots = np.percentile(x, percs)
+            else:
+                knots = np.sort(np.unique(x))
+        else:
+            knots = np.asarray(knots)
+            knots.sort()
+            
+        self.knots = knots
+        n_k = len(knots)
+        self.n_k_ = n_k
+
+        # --- Standardization / Scaling ---
+        x_min, x_max = x.min(), x.max()
+        scale = x_max - x_min if x_max > x_min else 1.0
+        self.x_min_ = x_min
+        self.x_scale_ = scale
+
+        x_scaled = (x - x_min) / scale
+        knots_scaled = (knots - x_min) / scale
+        self.knots_scaled_ = knots_scaled
+        return x_scaled, knots_scaled
+
+    def _prepare_matrices(self):
+        """
+        Initialize the C++ extension fitter.
+        """
+        from smoothing_spline._spline_extension import SplineFitterBSpline as _ExtSplineFitterBSpline
+        
+        x_scaled, knots_scaled = self._setup_scaling_and_knots()
+        self._cpp_fitter = _ExtSplineFitterBSpline(x_scaled, knots_scaled, self.w, self.order)
+
+    def fit(self, y):
+        """
+        Fit the smoothing spline using the C++ extension.
+        """
+        self.y = y
+        if self.lamval is None:
+             self.lamval = 0.0
+        lam_scaled = self.lamval / self.x_scale_**3
+        
+        y_arr = np.asarray(y)
+        self._cpp_fitter.fit(y_arr, lam_scaled)
+
+    def predict(self, x, deriv=0):
+        """
+        Predict the response for a new set of predictor variables using C++ basis evaluation.
+        Parameters
+        ----------
+        x : np.ndarray
+            The predictor variables.
+        deriv : int, optional
+            The order of the derivative to compute (default is 0).
+        Returns
+        -------
+        np.ndarray
+            The predicted response or its derivative.
+        """
+        x_scaled = (x - self.x_min_) / self.x_scale_
+        
+        # Scale the derivative by the chain rule
+        scale_factor = 1.0 / (self.x_scale_ ** deriv)
+        
+        return self._cpp_fitter.predict(x_scaled, deriv) * scale_factor

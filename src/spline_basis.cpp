@@ -8,6 +8,8 @@
 #include <cmath>
 #include <functional>
 #include <limits>
+#include <string>
+#include <stdexcept>
 
 namespace py = pybind11;
 
@@ -71,7 +73,6 @@ namespace {
         return b;
     }
 
-    // Brent's method for minimization
     double brent_min(std::function<double(double)> func, double a, double b, double tol=1e-5, int max_iter=20) {
         double x, w, v, fx, fw, fv;
         double d = 0.0, e = 0.0;
@@ -135,9 +136,6 @@ namespace {
     }
 }
 
-/**
- * Computes the Natural Cubic Spline Basis matrix.
- */
 Eigen::MatrixXd compute_natural_spline_basis(
     const Eigen::Ref<const Eigen::VectorXd>& x,
     const Eigen::Ref<const Eigen::VectorXd>& knots,
@@ -147,9 +145,7 @@ Eigen::MatrixXd compute_natural_spline_basis(
     long n_knots = knots.size();
     long n_x = x.size();
 
-    // 1. Setup the tridiagonal system for second derivatives (M)
     Eigen::VectorXd h = knots.segment(1, n_knots - 1) - knots.segment(0, n_knots - 1);
-    
     long n_inner = n_knots - 2;
     if (n_inner < 0) {
         if (n_knots == 2) {
@@ -174,7 +170,6 @@ Eigen::MatrixXd compute_natural_spline_basis(
     }
 
     Eigen::MatrixXd A = Eigen::MatrixXd::Zero(n_inner, n_inner);
-    
     for (long i = 0; i < n_inner; ++i) {
         A(i, i) = (h[i] + h[i+1]) / 3.0;
         if (i < n_inner - 1) {
@@ -197,22 +192,17 @@ Eigen::MatrixXd compute_natural_spline_basis(
     }
     
     Eigen::MatrixXd M_inner = solver.solve(B);
-    
     Eigen::MatrixXd M = Eigen::MatrixXd::Zero(n_knots, n_knots);
     M.block(1, 0, n_inner, n_knots) = M_inner;
     
-    // Boundary derivatives
     Eigen::RowVectorXd d1_left(n_knots);
     Eigen::RowVectorXd d1_right(n_knots);
-
-    // Left boundary x0
     double inv_h0 = 1.0 / h[0];
     double h0_6 = h[0] / 6.0;
     d1_left = -h0_6 * M.row(1);
     d1_left[1] += inv_h0;
     d1_left[0] -= inv_h0;
 
-    // Right boundary x_{N-1}
     long last_idx = n_knots - 1;
     long pen_idx = n_knots - 2;
     double hk = h[pen_idx];
@@ -222,13 +212,9 @@ Eigen::MatrixXd compute_natural_spline_basis(
     d1_right[last_idx] += inv_hk;
     d1_right[pen_idx] -= inv_hk;
 
-    // 3. Evaluate the splines at x
     Eigen::MatrixXd N(n_x, n_knots);
-    
     for (long i = 0; i < n_x; ++i) {
         double val = x[i];
-        
-        // --- Extrapolation ---
         if (extrapolate_linear && val < knots[0]) {
              if (derivative_order == 0) {
                  N.row(i) = d1_left * (val - knots[0]);
@@ -240,7 +226,6 @@ Eigen::MatrixXd compute_natural_spline_basis(
              }
              continue;
         }
-        
         if (extrapolate_linear && val > knots[n_knots - 1]) {
              if (derivative_order == 0) {
                  N.row(i) = d1_right * (val - knots[n_knots - 1]);
@@ -253,7 +238,6 @@ Eigen::MatrixXd compute_natural_spline_basis(
              continue;
         }
 
-        // --- Standard Cubic Evaluation ---
         long k = 0;
         if (val < knots[0]) {
             k = 0; 
@@ -275,63 +259,39 @@ Eigen::MatrixXd compute_natural_spline_basis(
             double term2 = t;
             double term3 = (std::pow(1.0 - t, 3) - (1.0 - t)) * hk_val * hk_val / 6.0;
             double term4 = (std::pow(t, 3) - t) * hk_val * hk_val / 6.0;
-
             N.row(i) = term3 * M.row(k) + term4 * M.row(k+1);
             N(i, k)   += term1;
             N(i, k+1) += term2;
         } else if (derivative_order == 1) {
             double term1 = -1.0 / hk_val;
             double term2 = 1.0 / hk_val;
-            // d/dx term3:
-            // d/dt term3 * dt/dx = d/dt term3 * (1/h)
-            // d/dt [ (1-t)^3 - (1-t) ] = -3(1-t)^2 + 1
             double d_term3_dt = -3.0 * std::pow(1.0 - t, 2) + 1.0;
-            double term3 = d_term3_dt * (hk_val / 6.0); // h^2/6 * 1/h = h/6
-            
-            // d/dt [ t^3 - t ] = 3t^2 - 1
+            double term3 = d_term3_dt * (hk_val / 6.0); 
             double d_term4_dt = 3.0 * std::pow(t, 2) - 1.0;
             double term4 = d_term4_dt * (hk_val / 6.0);
-
             N.row(i) = term3 * M.row(k) + term4 * M.row(k+1);
             N(i, k)   += term1;
             N(i, k+1) += term2;
         } else if (derivative_order == 2) {
-            // d2/dx2 term3:
-            // d2/dt2 term3 * (1/h^2)
-            // d/dt [-3(1-t)^2 + 1] = -3 * 2 * (1-t) * (-1) = 6(1-t)
             double d2_term3_dt2 = 6.0 * (1.0 - t);
-            double term3 = d2_term3_dt2 / 6.0; // h^2/6 * 1/h^2 = 1/6
-
-            // d/dt [3t^2 - 1] = 6t
+            double term3 = d2_term3_dt2 / 6.0; 
             double d2_term4_dt2 = 6.0 * t;
             double term4 = d2_term4_dt2 / 6.0;
-
             N.row(i) = term3 * M.row(k) + term4 * M.row(k+1);
-            // Linear parts vanish
         }
     }
-
     return N;
 }
 
-
-/**
- * Computes the Natural Spline Penalty Matrix Omega.
- */
 Eigen::MatrixXd compute_penalty_matrix(const Eigen::Ref<const Eigen::VectorXd>& knots) {
     long n_knots = knots.size();
     if (n_knots < 2) return Eigen::MatrixXd::Zero(n_knots, n_knots);
-    
     Eigen::VectorXd h = knots.segment(1, n_knots - 1) - knots.segment(0, n_knots - 1);
     Eigen::VectorXd inv_h = h.cwiseInverse();
-    
     long n_inner = n_knots - 2;
     if (n_inner <= 0) return Eigen::MatrixXd::Zero(n_knots, n_knots);
-
     Eigen::SparseMatrix<double> R(n_inner, n_inner);
     std::vector<Eigen::Triplet<double>> r_triplets;
-    r_triplets.reserve(n_inner * 3);
-    
     for (int i = 0; i < n_inner; ++i) {
         r_triplets.push_back({i, i, (h[i] + h[i+1]) / 3.0});
         if (i < n_inner - 1) {
@@ -340,27 +300,20 @@ Eigen::MatrixXd compute_penalty_matrix(const Eigen::Ref<const Eigen::VectorXd>& 
         }
     }
     R.setFromTriplets(r_triplets.begin(), r_triplets.end());
-
     Eigen::SparseMatrix<double> Q(n_knots, n_inner);
     std::vector<Eigen::Triplet<double>> q_triplets;
-    q_triplets.reserve(n_inner * 3);
-    
     for (int j = 0; j < n_inner; ++j) {
         q_triplets.push_back({j, j, inv_h[j]});
         q_triplets.push_back({j+1, j, -inv_h[j] - inv_h[j+1]});
         q_triplets.push_back({j+2, j, inv_h[j+1]});
     }
     Q.setFromTriplets(q_triplets.begin(), q_triplets.end());
-    
     Eigen::SimplicialLLT<Eigen::SparseMatrix<double>> solver;
     solver.compute(R);
     if(solver.info() != Eigen::Success) throw std::runtime_error("R factorization failed");
-    
     Eigen::MatrixXd QT = Q.transpose();
     Eigen::MatrixXd X = solver.solve(QT);
-    
-    Eigen::MatrixXd Omega = Q * X;
-    return Omega;
+    return Q * X;
 }
 
 class SplineFitterCpp {
@@ -370,108 +323,66 @@ class SplineFitterCpp {
     Eigen::MatrixXd NTWN_; 
     Eigen::VectorXd knots_;
     Eigen::VectorXd alpha_;
-    
 public:
-    SplineFitterCpp(const Eigen::Ref<const Eigen::VectorXd>& x, 
-                    const Eigen::Ref<const Eigen::VectorXd>& knots,
-                    py::object weights_obj) {
+    SplineFitterCpp(const Eigen::Ref<const Eigen::VectorXd>& x, const Eigen::Ref<const Eigen::VectorXd>& knots, py::object weights_obj) {
         knots_ = knots;
         N_ = compute_natural_spline_basis(x, knots, true, 0);
         Omega_ = compute_penalty_matrix(knots);
-        
         update_weights(weights_obj);
     }
-    
     void update_weights(py::object weights_obj) {
         if (weights_obj.is_none()) {
             NTW_ = N_.transpose(); 
             NTWN_ = N_.transpose() * N_;
         } else {
             Eigen::VectorXd weights = weights_obj.cast<Eigen::VectorXd>();
-            if (weights.size() != N_.rows()) throw std::invalid_argument("Weights size mismatch");
-            
             NTW_ = N_.transpose(); 
-            // Multiply each COL of NTW_ (row of N) by weights[i]
-            for (int i = 0; i < NTW_.cols(); ++i) {
-                NTW_.col(i) *= weights[i];
-            }
+            for (int i = 0; i < NTW_.cols(); ++i) NTW_.col(i) *= weights[i];
             NTWN_ = NTW_ * N_;
         }
     }
-    
     Eigen::VectorXd fit(const Eigen::Ref<const Eigen::VectorXd>& y, double lamval) {
         Eigen::MatrixXd LHS = NTWN_ + lamval * Omega_;
         Eigen::VectorXd RHS = NTW_ * y;
-        
         Eigen::LLT<Eigen::MatrixXd> solver;
         solver.compute(LHS);
-        
         if (solver.info() != Eigen::Success) {
              Eigen::LDLT<Eigen::MatrixXd> solver_ldlt;
              solver_ldlt.compute(LHS);
-             if (solver_ldlt.info() != Eigen::Success) {
-                  throw std::runtime_error("Solver failed");
-             }
              alpha_ = solver_ldlt.solve(RHS);
-        } else {
-             alpha_ = solver.solve(RHS);
-        }
-        
+        } else alpha_ = solver.solve(RHS);
         return alpha_;
     }
-
     Eigen::VectorXd predict(const Eigen::Ref<const Eigen::VectorXd>& x_new, int deriv=0) {
-        if (alpha_.size() == 0) throw std::runtime_error("Model not fitted");
         Eigen::MatrixXd N_new = compute_natural_spline_basis(x_new, knots_, true, deriv);
         return N_new * alpha_;
     }
-    
     double compute_df(double lamval) {
         Eigen::MatrixXd LHS = NTWN_ + lamval * Omega_;
-        
         Eigen::LLT<Eigen::MatrixXd> solver;
         solver.compute(LHS);
-        
         if (solver.info() != Eigen::Success) return 0.0;
-        
         Eigen::MatrixXd X = solver.solve(NTWN_);
         return X.trace();
     }
-    
     double gcv_score(double lamval, const Eigen::Ref<const Eigen::VectorXd>& y) {
-        // Unweighted residuals for now, as before
         Eigen::VectorXd alpha = fit(y, lamval);
         Eigen::VectorXd f = N_ * alpha;
-        Eigen::VectorXd resid = y - f;
-        double rss = resid.squaredNorm(); 
-        
+        double rss = (y - f).squaredNorm(); 
         double df = compute_df(lamval);
         double n = (double)y.size();
         double denom = 1.0 - df / n;
-        if (denom < 1e-6) return 1e20; // singularity
-        
+        if (denom < 1e-6) return 1e20;
         return (rss / n) / (denom * denom);
     }
-
     double solve_for_df(double target_df) {
-        auto func = [&](double log_lam) {
-            double lam = std::pow(10.0, log_lam);
-            return compute_df(lam) - target_df;
-        };
-        
-        double log_lam_opt = brent_root(func, -12.0, 12.0);
-        return std::pow(10.0, log_lam_opt);
+        auto func = [&](double log_lam) { return compute_df(std::pow(10.0, log_lam)) - target_df; };
+        return std::pow(10.0, brent_root(func, -12.0, 12.0));
     }
-
     double solve_gcv(const Eigen::Ref<const Eigen::VectorXd>& y, double min_log_lam = -12.0, double max_log_lam = 12.0) {
-        auto func = [&](double log_lam) {
-            double lam = std::pow(10.0, log_lam);
-            return gcv_score(lam, y);
-        };
-        double log_lam_opt = brent_min(func, min_log_lam, max_log_lam);
-        return std::pow(10.0, log_lam_opt);
+        auto func = [&](double log_lam) { return gcv_score(std::pow(10.0, log_lam), y); };
+        return std::pow(10.0, brent_min(func, min_log_lam, max_log_lam));
     }
-
     Eigen::MatrixXd get_N() { return N_; }
     Eigen::MatrixXd get_Omega() { return Omega_; }
 };
@@ -481,447 +392,312 @@ class CubicSplineTraceCpp {
     int n_;
     Eigen::VectorXd h_;
     Eigen::VectorXd weights_inv_;
-
-    Eigen::VectorXd R_diag, R_off;
-    Eigen::VectorXd M_diag, M_off1, M_off2;
-
+    Eigen::VectorXd R_diag, R_off, M_diag, M_off1, M_off2;
     void compute_QR_bands() {
         int n_inner = n_ - 2;
-        
-        // R bands
-        R_diag.resize(n_inner);
-        R_off.resize(n_inner - 1);
-        for (int i = 0; i < n_inner; ++i) {
-            R_diag(i) = (h_(i) + h_(i + 1)) / 3.0;
-        }
-        for (int i = 0; i < n_inner - 1; ++i) {
-            R_off(i) = h_(i + 1) / 6.0;
-        }
-
-        // M = Q^T W^-1 Q bands
-        M_diag.resize(n_inner);
-        M_off1.resize(n_inner - 1);
-        M_off2.resize(n_inner - 2);
-
+        R_diag.resize(n_inner); R_off.resize(n_inner - 1);
+        for (int i = 0; i < n_inner; ++i) R_diag(i) = (h_(i) + h_(i + 1)) / 3.0;
+        for (int i = 0; i < n_inner - 1; ++i) R_off(i) = h_(i + 1) / 6.0;
+        M_diag.resize(n_inner); M_off1.resize(n_inner - 1); M_off2.resize(n_inner - 2);
         Eigen::VectorXd inv_h_j = h_.head(n_inner).cwiseInverse();
         Eigen::VectorXd inv_h_j_plus_1 = h_.tail(n_inner).cwiseInverse();
         Eigen::VectorXd q1_vals = -(inv_h_j + inv_h_j_plus_1);
-
-        // Diagonal M_jj
         M_diag = (inv_h_j.array().square() * weights_inv_.head(n_inner).array()) +
                  (q1_vals.array().square() * weights_inv_.segment(1, n_inner).array()) +
                  (inv_h_j_plus_1.array().square() * weights_inv_.segment(2, n_inner).array());
-
-        // Off-diagonal 1: M_j,j+1
         M_off1 = (q1_vals.head(n_inner - 1).array() * inv_h_j.tail(n_inner - 1).array() * weights_inv_.segment(1, n_inner - 1).array()) +
                  (inv_h_j_plus_1.head(n_inner - 1).array() * q1_vals.tail(n_inner - 1).array() * weights_inv_.segment(2, n_inner - 1).array());
-
-        // Off-diagonal 2: M_j,j+2
         M_off2 = (inv_h_j_plus_1.head(n_inner - 2).array() * inv_h_j.tail(n_inner - 2).array() * weights_inv_.segment(2, n_inner - 2).array());
     }
-
 public:
     CubicSplineTraceCpp(const Eigen::Ref<const Eigen::VectorXd>& x, py::object weights_obj) {
-        x_ = x;
-        n_ = x.size();
-        if (n_ < 4) {
-            throw std::invalid_argument("Need at least 4 points for cubic spline smoothing.");
-        }
-        h_.resize(n_ - 1);
-        for (int i = 0; i < n_ - 1; ++i) {
-            h_(i) = x_(i + 1) - x_(i);
-        }
-
+        x_ = x; n_ = x.size(); h_.resize(n_ - 1);
+        for (int i = 0; i < n_ - 1; ++i) h_(i) = x_(i + 1) - x_(i);
         weights_inv_.resize(n_);
-        if (weights_obj.is_none()) {
-            weights_inv_.setOnes();
-        } else {
-            Eigen::VectorXd w = weights_obj.cast<Eigen::VectorXd>();
-            if (w.size() != n_) {
-                throw std::invalid_argument("Weights array must have the same length as x.");
-            }
-            weights_inv_ = w.cwiseInverse();
-        }
-
+        if (weights_obj.is_none()) weights_inv_.setOnes();
+        else weights_inv_ = weights_obj.cast<Eigen::VectorXd>().cwiseInverse();
         compute_QR_bands();
     }
-
     double compute_trace(double lam) {
         int n_inner = n_ - 2;
-
-        // Construct B = R + lam * M
-        Eigen::VectorXd B_diag = R_diag + lam * M_diag;
-        B_diag.array() += 1e-9; // Add a small epsilon for numerical stability
-        Eigen::VectorXd B_off1 = R_off + lam * M_off1;
-        Eigen::VectorXd B_off2 = lam * M_off2;
-        
-        // Eigen's BandMatrix is not available in the standard library.
-        // For simplicity, we can represent the pentadiagonal matrix B
-        // and perform Cholesky decomposition.
-        // However, a full matrix would be O(N^3).
-        // To maintain O(N), we need a banded Cholesky solver.
-        // Let's implement a simple banded Cholesky for a pentadiagonal matrix.
-
-        // Packed format for banded Cholesky (lower triangular part)
-        // L_banded(0, i) = L_ii
-        // L_banded(1, i) = L_{i+1, i}
-        // L_banded(2, i) = L_{i+2, i}
+        Eigen::VectorXd B_diag = R_diag + lam * M_diag; B_diag.array() += 1e-9;
+        Eigen::VectorXd B_off1 = R_off + lam * M_off1; Eigen::VectorXd B_off2 = lam * M_off2;
         Eigen::MatrixXd L_banded = Eigen::MatrixXd::Zero(3, n_inner);
-
         for (int i = 0; i < n_inner; ++i) {
             double l_ii_sq = B_diag(i);
             if (i > 0) l_ii_sq -= std::pow(L_banded(1, i-1), 2);
             if (i > 1) l_ii_sq -= std::pow(L_banded(2, i-2), 2);
-            
-            if (l_ii_sq <= 0) {
-                 return std::numeric_limits<double>::quiet_NaN();
-            }
+            if (l_ii_sq <= 0) return std::numeric_limits<double>::quiet_NaN();
             L_banded(0, i) = std::sqrt(l_ii_sq);
-
             if (i < n_inner - 1) {
                 double l_i1_i = B_off1(i);
                 if (i > 0) l_i1_i -= L_banded(1, i-1) * L_banded(2, i-1);
                 L_banded(1, i) = l_i1_i / L_banded(0, i);
             }
-            if (i < n_inner - 2) {
-                L_banded(2, i) = B_off2(i) / L_banded(0, i);
-            }
+            if (i < n_inner - 2) L_banded(2, i) = B_off2(i) / L_banded(0, i);
         }
-        
-        // Takahashi's equations for B^-1
-        Eigen::VectorXd Inv_diag = Eigen::VectorXd::Zero(n_inner);
-        Eigen::VectorXd Inv_off1 = Eigen::VectorXd::Zero(n_inner - 1);
-        
+        Eigen::VectorXd Inv_diag = Eigen::VectorXd::Zero(n_inner), Inv_off1 = Eigen::VectorXd::Zero(n_inner - 1);
         for (int i = n_inner - 1; i >= 0; --i) {
-            double val = 1.0 / L_banded(0, i);
-            double sum_diag = 0.0;
-
+            double val = 1.0 / L_banded(0, i), sum_diag = 0.0;
             if (i + 1 < n_inner) {
                 double s_off = L_banded(1, i) * Inv_diag(i + 1);
-                if (i + 2 < n_inner) {
-                    s_off += L_banded(2, i) * Inv_off1(i + 1);
-                }
-                Inv_off1(i) = -val * s_off;
-                sum_diag += L_banded(1, i) * Inv_off1(i);
+                if (i + 2 < n_inner) s_off += L_banded(2, i) * Inv_off1(i + 1);
+                Inv_off1(i) = -val * s_off; sum_diag += L_banded(1, i) * Inv_off1(i);
             }
-
             if (i + 2 < n_inner) {
                 double s_off2 = L_banded(1, i) * Inv_off1(i + 1) + L_banded(2, i) * Inv_diag(i + 2);
-                double X_i_i2 = -val * s_off2;
-                sum_diag += L_banded(2, i) * X_i_i2;
+                sum_diag += L_banded(2, i) * (-val * s_off2);
             }
             Inv_diag(i) = val * (val - sum_diag);
         }
-
-        // Final Trace Calculation
         double tr_RBinv = (R_diag.array() * Inv_diag.array()).sum();
-        if (n_inner > 1) {
-            tr_RBinv += 2 * (R_off.array() * Inv_off1.array()).sum();
-        }
-        
+        if (n_inner > 1) tr_RBinv += 2 * (R_off.array() * Inv_off1.array()).sum();
         return 2.0 + tr_RBinv;
     }
 };
 
-/**
- * Reinsch Form Fitter (O(N))
- */
 class SplineFitterReinschCpp {
-    Eigen::SparseMatrix<double> Q_;
-    Eigen::SparseMatrix<double> R_;
-    Eigen::SparseMatrix<double> M_; // Q^T W^{-1} Q
-    Eigen::VectorXd weights_inv_;
-    Eigen::VectorXd x_;
-    Eigen::VectorXd gamma_;
-    Eigen::VectorXd f_;
-    long n_;
-    
+    Eigen::SparseMatrix<double> Q_, R_, M_; Eigen::VectorXd weights_inv_, x_, gamma_, f_; long n_;
 public:
-    SplineFitterReinschCpp(const Eigen::Ref<const Eigen::VectorXd>& x,
-                           py::object weights_obj) {
-        x_ = x;
-        n_ = x.size();
-        
-        // Build Q and R
-        long n_inner = n_ - 2;
+    SplineFitterReinschCpp(const Eigen::Ref<const Eigen::VectorXd>& x, py::object weights_obj) {
+        x_ = x; n_ = x.size(); long n_inner = n_ - 2;
         Eigen::VectorXd h = x.segment(1, n_ - 1) - x.segment(0, n_ - 1);
         Eigen::VectorXd inv_h = h.cwiseInverse();
-        
-        R_.resize(n_inner, n_inner);
-        Q_.resize(n_, n_inner); 
-        
-        std::vector<Eigen::Triplet<double>> r_triplets;
-        std::vector<Eigen::Triplet<double>> q_triplets;
-        
-        // R
+        R_.resize(n_inner, n_inner); Q_.resize(n_, n_inner); 
+        std::vector<Eigen::Triplet<double>> r_t, q_t;
         for (int i = 0; i < n_inner; ++i) {
-            r_triplets.push_back({i, i, (h[i] + h[i+1]) / 3.0});
-            if (i < n_inner - 1) {
-                r_triplets.push_back({i, i+1, h[i+1] / 6.0});
-                r_triplets.push_back({i+1, i, h[i+1] / 6.0});
-            }
+            r_t.push_back({i, i, (h[i] + h[i+1]) / 3.0});
+            if (i < n_inner - 1) { r_t.push_back({i, i+1, h[i+1] / 6.0}); r_t.push_back({i+1, i, h[i+1] / 6.0}); }
         }
-        R_.setFromTriplets(r_triplets.begin(), r_triplets.end());
-        
-        // Q
+        R_.setFromTriplets(r_t.begin(), r_t.end());
         for (int j = 0; j < n_inner; ++j) {
-            q_triplets.push_back({j, j, inv_h[j]});
-            q_triplets.push_back({j+1, j, -inv_h[j] - inv_h[j+1]});
-            q_triplets.push_back({j+2, j, inv_h[j+1]});
+            q_t.push_back({j, j, inv_h[j]}); q_t.push_back({j+1, j, -inv_h[j] - inv_h[j+1]}); q_t.push_back({j+2, j, inv_h[j+1]});
         }
-        Q_.setFromTriplets(q_triplets.begin(), q_triplets.end());
-        
+        Q_.setFromTriplets(q_t.begin(), q_t.end());
         update_weights(weights_obj);
     }
-    
     void update_weights(py::object weights_obj) {
-        weights_inv_.resize(n_);
-        if (weights_obj.is_none()) {
-            weights_inv_.setOnes();
-        } else {
-            Eigen::VectorXd w = weights_obj.cast<Eigen::VectorXd>();
-            weights_inv_ = w.cwiseInverse();
-        }
-        
-        // M = Q^T W^{-1} Q
-        // Re-construct Winv sparse matrix
+        if (weights_obj.is_none()) weights_inv_ = Eigen::VectorXd::Ones(n_);
+        else weights_inv_ = weights_obj.cast<Eigen::VectorXd>().cwiseInverse();
         Eigen::SparseMatrix<double> Winv(n_, n_);
-        std::vector<Eigen::Triplet<double>> w_triplets;
-        for(int i=0; i<n_; ++i) w_triplets.push_back({i, i, weights_inv_[i]});
-        Winv.setFromTriplets(w_triplets.begin(), w_triplets.end());
+        std::vector<Eigen::Triplet<double>> w_t;
+        for(int i=0; i<n_; ++i) w_t.push_back({i, i, weights_inv_[i]});
+        Winv.setFromTriplets(w_t.begin(), w_t.end());
         M_ = Q_.transpose() * Winv * Q_;
     }
-    
     Eigen::VectorXd fit(const Eigen::Ref<const Eigen::VectorXd>& y, double lamval) {
         Eigen::VectorXd QT_y = Q_.transpose() * y;
         Eigen::SparseMatrix<double> LHS = R_ + lamval * M_;
-        
         Eigen::SimplicialLLT<Eigen::SparseMatrix<double>> solver;
         solver.compute(LHS);
-        if(solver.info() != Eigen::Success) throw std::runtime_error("Reinsch solver failed");
-        
         gamma_ = solver.solve(QT_y);
-        
-        // f = y - lam * W^{-1} * Q * gamma
-        Eigen::VectorXd Q_gamma = Q_ * gamma_;
-        Eigen::VectorXd term = weights_inv_.cwiseProduct(Q_gamma);
-        f_ = y - lamval * term;
+        f_ = y - lamval * weights_inv_.cwiseProduct(Q_ * gamma_);
         return f_;
     }
-    
-    double compute_df_sparse(double lamval) {
-        Eigen::SparseMatrix<double> LHS = R_ + lamval * M_;
-        Eigen::SimplicialLLT<Eigen::SparseMatrix<double>> solver;
-        solver.compute(LHS);
-        
-        double trace_val = 0.0;
-        long n_inner = M_.rows();
-        
-        if (n_inner > 1000) {
-             return compute_df_hutchinson(solver, lamval * M_, n_inner);
-        }
-        
-        Eigen::VectorXd rhs;
-        Eigen::VectorXd sol;
-        
-        for (int j = 0; j < n_inner; ++j) {
-            rhs = lamval * M_.col(j); 
-            sol = solver.solve(rhs);
-            trace_val += sol[j];
-        }
-        
-        long n = weights_inv_.size(); 
-        return n - trace_val;
-    }
-
     double compute_df(double lamval) {
-        Eigen::VectorXd original_weights = weights_inv_.cwiseInverse(); // Convert to concrete Eigen::VectorXd
-        py::object weights_obj = py::cast(original_weights); // Cast to py::object
-        CubicSplineTraceCpp trace_solver(x_, weights_obj); // Pass original weights to trace solver
+        Eigen::VectorXd original_weights = weights_inv_.cwiseInverse();
+        CubicSplineTraceCpp trace_solver(x_, py::cast(original_weights));
         return trace_solver.compute_trace(lamval);
     }
-    
-    double compute_df_hutchinson(Eigen::SimplicialLLT<Eigen::SparseMatrix<double>>& solver, 
-                                 const Eigen::SparseMatrix<double>& B, 
-                                 long n_dim) {
-        int n_samples = 30; 
-        double trace_est = 0.0;
-        
-        Eigen::VectorXd z(n_dim);
-        std::srand(12345); 
-        
-        for(int i=0; i<n_samples; ++i) {
-            for(int k=0; k<n_dim; ++k) z[k] = (std::rand() % 2) ? 1.0 : -1.0;
-            
-            Eigen::VectorXd v = B * z;
-            Eigen::VectorXd u = solver.solve(v);
-            trace_est += z.dot(u);
-        }
-        
-        long n = weights_inv_.size();
-        return n - (trace_est / n_samples);
-    }
-
     double gcv_score(double lamval, const Eigen::Ref<const Eigen::VectorXd>& y) {
         Eigen::VectorXd f = fit(y, lamval);
-        Eigen::VectorXd resid = y - f;
-        Eigen::VectorXd w = weights_inv_.cwiseInverse();
-        double rss = (resid.array().square() * w.array()).sum();
-        
-        double df = compute_df(lamval);
-        double n = (double)y.size();
-        double denom = 1.0 - df / n;
-        if (denom < 1e-6) return 1e20;
-        
-        return (rss / n) / (denom * denom);
+        double rss = ((y - f).array().square() * weights_inv_.cwiseInverse().array()).sum();
+        double df = compute_df(lamval), n = (double)y.size(), denom = 1.0 - df / n;
+        return (denom < 1e-6) ? 1e20 : (rss / n) / (denom * denom);
     }
-
     double solve_for_df(double target_df) {
-        auto func = [&](double log_lam) {
-            double lam = std::pow(10.0, log_lam);
-            return compute_df(lam) - target_df;
-        };
-        double log_lam_opt = brent_root(func, -12.0, 12.0);
-        return std::pow(10.0, log_lam_opt);
+        auto func = [&](double log_lam) { return compute_df(std::pow(10.0, log_lam)) - target_df; };
+        return std::pow(10.0, brent_root(func, -12.0, 12.0));
     }
-
     double solve_gcv(const Eigen::Ref<const Eigen::VectorXd>& y, double min_log_lam = -12.0, double max_log_lam = 12.0) {
-        auto func = [&](double log_lam) {
-            double lam = std::pow(10.0, log_lam);
-            return gcv_score(lam, y);
-        };
-        double log_lam_opt = brent_min(func, min_log_lam, max_log_lam);
-        return std::pow(10.0, log_lam_opt);
+        auto func = [&](double log_lam) { return gcv_score(std::pow(10.0, log_lam), y); };
+        return std::pow(10.0, brent_min(func, min_log_lam, max_log_lam));
     }
-
     Eigen::VectorXd predict(const Eigen::Ref<const Eigen::VectorXd>& x_new, int deriv=0) {
-        if (f_.size() == 0) throw std::runtime_error("Model not fitted");
-        
-        Eigen::VectorXd M(n_);
-        M[0] = 0.0;
-        M[n_-1] = 0.0;
-        M.segment(1, n_-2) = gamma_;
-        
-        long n_new = x_new.size();
-        Eigen::VectorXd y_pred(n_new);
-        
-        for(long i=0; i<n_new; ++i) {
-            double val = x_new[i];
-            long k = 0;
+        Eigen::VectorXd M_c(n_); M_c[0] = 0.0; M_c[n_-1] = 0.0; M_c.segment(1, n_-2) = gamma_;
+        Eigen::VectorXd y_p(x_new.size());
+        for(long i=0; i<x_new.size(); ++i) {
+            double val = x_new[i]; long k = 0;
+            if (val < x_[0]) k = 0; else if (val >= x_[n_-1]) k = n_ - 2;
+            else k = std::distance(x_.data(), std::upper_bound(x_.data(), x_.data() + n_, val)) - 1;
+            double h = x_[k+1] - x_[k];
             if (val < x_[0]) {
-                k = 0;
-            } else if (val >= x_[n_-1]) {
-                k = n_ - 2;
-            } else {
-                auto it = std::upper_bound(x_.data(), x_.data() + n_, val);
-                k = std::distance(x_.data(), it) - 1;
-                if (k < 0) k = 0;
-                if (k >= n_ - 1) k = n_ - 2;
-            }
-            
-            if (val < x_[0]) {
-                double h = x_[1] - x_[0];
-                double first_deriv = (f_[1] - f_[0]) / h - h * M[1] / 6.0;
-                if (deriv == 0) {
-                    y_pred[i] = f_[0] + first_deriv * (val - x_[0]);
-                } else if (deriv == 1) {
-                    y_pred[i] = first_deriv;
-                } else {
-                    y_pred[i] = 0;
-                }
+                double d1 = (f_[1] - f_[0]) / h - h * M_c[1] / 6.0;
+                y_p[i] = (deriv == 0) ? f_[0] + d1 * (val - x_[0]) : (deriv == 1 ? d1 : 0);
             } else if (val > x_[n_-1]) {
-                long last_k = n_ - 2;
-                double h = x_[last_k+1] - x_[last_k];
-                double first_deriv = (f_[last_k+1] - f_[last_k]) / h + M[last_k] * h / 6.0 + M[last_k+1] * h / 3.0;
-                if (deriv == 0) {
-                    y_pred[i] = f_[n_-1] + first_deriv * (val - x_[n_-1]);
-                } else if (deriv == 1) {
-                    y_pred[i] = first_deriv;
-                } else {
-                    y_pred[i] = 0;
-                }
+                double d1 = (f_[n_-1] - f_[n_-2]) / (x_[n_-1] - x_[n_-2]) + M_c[n_-2] * (x_[n_-1] - x_[n_-2]) / 6.0;
+                y_p[i] = (deriv == 0) ? f_[n_-1] + d1 * (val - x_[n_-1]) : (deriv == 1 ? d1 : 0);
             } else {
-                double h = x_[k+1] - x_[k];
                 if (deriv == 0) {
-                    double term1 = (std::pow(x_[k+1] - val, 3) * M[k] + std::pow(val - x_[k], 3) * M[k+1]) / (6.0 * h);
-                    double term2 = (f_[k] - h*h * M[k] / 6.0) * (x_[k+1] - val) / h;
-                    double term3 = (f_[k+1] - h*h * M[k+1] / 6.0) * (val - x_[k]) / h;
-                    y_pred[i] = term1 + term2 + term3;
+                    y_p[i] = (std::pow(x_[k+1] - val, 3) * M_c[k] + std::pow(val - x_[k], 3) * M_c[k+1]) / (6.0 * h) +
+                             (f_[k] - h*h * M_c[k] / 6.0) * (x_[k+1] - val) / h + (f_[k+1] - h*h * M_c[k+1] / 6.0) * (val - x_[k]) / h;
                 } else if (deriv == 1) {
-                    double d_term1 = (-3.0 * std::pow(x_[k+1] - val, 2) * M[k] + 3.0 * std::pow(val - x_[k], 2) * M[k+1]) / (6.0 * h);
-                    double d_term2 = -(f_[k] - h*h * M[k] / 6.0) / h;
-                    double d_term3 = (f_[k+1] - h*h * M[k+1] / 6.0) / h;
-                    y_pred[i] = d_term1 + d_term2 + d_term3;
-                } else if (deriv == 2) {
-                    double d2_term1 = (6.0 * (x_[k+1] - val) * M[k] + 6.0 * (val - x_[k]) * M[k+1]) / (6.0 * h);
-                    y_pred[i] = d2_term1;
-                } else {
-                    y_pred[i] = 0;
+                    y_p[i] = (-3.0 * std::pow(x_[k+1] - val, 2) * M_c[k] + 3.0 * std::pow(val - x_[k], 2) * M_c[k+1]) / (6.0 * h) -
+                             (f_[k] - h*h * M_c[k] / 6.0) / h + (f_[k+1] - h*h * M_c[k+1] / 6.0) / h;
+                } else if (deriv == 2) y_p[i] = (6.0 * (x_[k+1] - val) * M_c[k] + 6.0 * (val - x_[k]) * M_c[k+1]) / (6.0 * h);
+                else y_p[i] = 0;
+            }
+        }
+        return y_p;
+    }
+};
+
+extern "C" {
+    void dpbsv_(const char *uplo, const int *n, const int *kd, const int *nrhs,
+                double *ab, const int *ldab, double *b, const int *ldb, int *info);
+}
+
+namespace bspline {
+    void eval_bspline_basis(double x, int k, const Eigen::VectorXd& knots, int& span_index, Eigen::VectorXd& N, int deriv=0) {
+        int n_k = (int)knots.size();
+        double d_min = knots[k-1], d_max = knots[n_k-k];
+        if (x < d_min) x = d_min; if (x > d_max) x = d_max;
+        int i = (x >= d_max) ? n_k - k - 1 : std::distance(knots.data(), std::upper_bound(knots.data() + k - 1, knots.data() + n_k - k, x)) - 1;
+        span_index = i - k + 1;
+        std::vector<double> left(k), right(k); std::vector<std::vector<double>> ndu(k, std::vector<double>(k));
+        ndu[0][0] = 1.0;
+        for (int j = 1; j < k; ++j) {
+            left[j] = x - knots[i + 1 - j]; right[j] = knots[i + j] - x;
+            double saved = 0.0;
+            for (int r = 0; r < j; ++r) {
+                ndu[j][r] = right[r + 1] + left[j - r];
+                double temp = ndu[r][j - 1] / ndu[j][r];
+                ndu[r][j] = saved + right[r + 1] * temp; saved = left[j - r] * temp;
+            }
+            ndu[j][j] = saved;
+        }
+        N.resize(k);
+        if (deriv == 0) { for (int j = 0; j < k; ++j) N[j] = ndu[j][k - 1]; return; }
+        std::vector<std::vector<double>> ders(deriv + 1, std::vector<double>(k));
+        for (int j = 0; j < k; ++j) ders[0][j] = ndu[j][k - 1];
+        for (int r = 0; r <= k - 1; ++r) {
+            int s1 = 0, s2 = 1; std::vector<std::vector<double>> a(2, std::vector<double>(k)); a[0][0] = 1.0;
+            for (int d = 1; d <= deriv; ++d) {
+                double d_v = 0.0; int rk = r - d, pk = k - 1 - d;
+                if (r >= d) { double den = ndu[pk + 1][rk]; a[s2][0] = (den == 0.0) ? 0.0 : a[s1][0] / den; d_v = a[s2][0] * ndu[rk][pk]; }
+                for (int j = std::max(0, -rk); j <= std::min(d - 1, k - r - 1); ++j) {
+                    if (j == 0 && r >= d) continue;
+                    double den = ndu[pk + 1][rk + j];
+                    a[s2][j] = (den == 0.0) ? 0.0 : (a[s1][j] - (j > 0 ? a[s1][j - 1] : 0.0)) / den;
+                    d_v += a[s2][j] * ndu[rk + j][pk];
+                }
+                if (r <= pk) { double den = ndu[pk + 1][r]; a[s2][d] = (den == 0.0) ? 0.0 : -a[s1][d - 1] / den; d_v += a[s2][d] * ndu[r][pk]; }
+                ders[d][r] = d_v; std::swap(s1, s2);
+            }
+        }
+        double factor = (double)(k - 1);
+        for (int d = 1; d <= deriv; ++d) { for (int j = 0; j < k; ++j) ders[d][j] *= factor; factor *= (k - 1 - d); }
+        for (int j = 0; j < k; ++j) N[j] = ders[deriv][j];
+    }
+}
+
+class SplineFitterBSpline {
+    int order_; Eigen::VectorXd knots_, coeffs_, weights_, x_; int n_basis_; Eigen::MatrixXd AB_template_, Omega_band_;
+public:
+    SplineFitterBSpline(const Eigen::Ref<const Eigen::VectorXd>& x, const Eigen::Ref<const Eigen::VectorXd>& i_k, py::object w_obj, int order = 4) : order_(order), x_(x) {
+        long n_i = i_k.size(), n_a = n_i + 2 * (order - 1); knots_.resize(n_a);
+        for(int i=0; i<order; ++i) knots_[i] = i_k[0];
+        if (n_i > 2) knots_.segment(order, n_i - 2) = i_k.segment(1, n_i - 2);
+        for(int i=0; i<order; ++i) knots_[n_a - order + i] = i_k[n_i - 1];
+        n_basis_ = (int)(n_a - order);
+        weights_ = w_obj.is_none() ? Eigen::VectorXd::Ones(x.size()) : w_obj.cast<Eigen::VectorXd>();
+        int kd = order - 1; AB_template_ = Eigen::MatrixXd::Zero(kd + 1, n_basis_); compute_NTWN();
+        Omega_band_ = Eigen::MatrixXd::Zero(kd + 1, n_basis_); compute_penalty_matrix();
+    }
+    void compute_NTWN() {
+        Eigen::VectorXd b_v(order_); int s_i;
+        for (int i = 0; i < x_.size(); ++i) {
+            bspline::eval_bspline_basis(x_[i], order_, knots_, s_i, b_v, 0);
+            for (int r = 0; r < order_; ++r) {
+                int rg = s_i + r; if (rg >= n_basis_) continue;
+                for (int c = 0; c <= r; ++c) { int cg = s_i + c; AB_template_(rg - cg, cg) += weights_[i] * b_v[r] * b_v[c]; }
+            }
+        }
+    }
+    void compute_penalty_matrix() {
+        double pt = 1.0 / std::sqrt(3.0); double gp[2] = {-pt, pt}, gw[2] = {1.0, 1.0};
+        int s_k = order_ - 1, e_k = (int)knots_.size() - order_; Eigen::VectorXd b_d(order_); int s_i;
+        for (int k = s_k; k < e_k; ++k) {
+            double t_s = knots_[k], t_e = knots_[k+1], dt = t_e - t_s; if (dt <= 1e-14) continue;
+            for (int g = 0; g < 2; ++g) {
+                bspline::eval_bspline_basis(0.5 * (t_s + t_e) + 0.5 * dt * gp[g], order_, knots_, s_i, b_d, 2);
+                double w_v = 0.5 * dt * gw[g];
+                for (int r = 0; r < order_; ++r) {
+                    int rg = s_i + r; if (rg >= n_basis_) continue;
+                    for (int c = 0; c <= r; ++c) { int cg = s_i + c; Omega_band_(rg - cg, cg) += w_v * b_d[r] * b_d[c]; }
                 }
             }
         }
-        return y_pred;
+    }
+    Eigen::VectorXd eval_basis(double x_val, int deriv=0) {
+        Eigen::VectorXd v = Eigen::VectorXd::Zero(n_basis_), b_v(order_); int s_i;
+        bspline::eval_bspline_basis(x_val, order_, knots_, s_i, b_v, deriv);
+        for(int j=0; j<order_; ++j) { int idx = s_i + j; if(idx < n_basis_) v[idx] = b_v[j]; }
+        return v;
+    }
+    Eigen::VectorXd get_knots() { return knots_; }
+    Eigen::MatrixXd get_NTWN() {
+        Eigen::MatrixXd M = Eigen::MatrixXd::Zero(n_basis_, n_basis_); int kd = order_ - 1;
+        for (int j = 0; j < n_basis_; ++j) { for (int i = 0; i <= kd; ++i) { int row = j + i; if (row < n_basis_) { double v = AB_template_(i, j); M(row, j) = v; M(j, row) = v; } } }
+        return M;
+    }
+    Eigen::MatrixXd get_Omega() {
+        Eigen::MatrixXd M = Eigen::MatrixXd::Zero(n_basis_, n_basis_); int kd = order_ - 1;
+        for (int j = 0; j < n_basis_; ++j) { for (int i = 0; i <= kd; ++i) { int row = j + i; if (row < n_basis_) { double v = Omega_band_(i, j); M(row, j) = v; M(j, row) = v; } } }
+        return M;
+    }
+    void fit(const Eigen::Ref<const Eigen::VectorXd>& y, double lamval) {
+        int n = n_basis_, kd = order_ - 1, ldab = kd + 1;
+        Eigen::MatrixXd AB = AB_template_ + lamval * Omega_band_; Eigen::VectorXd b = Eigen::VectorXd::Zero(n), b_v(order_); int s_i;
+        for(int i=0; i<x_.size(); ++i) {
+            bspline::eval_bspline_basis(x_[i], order_, knots_, s_i, b_v, 0);
+            for(int j=0; j<order_; ++j) { int idx = s_i + j; if(idx < n) b[idx] += weights_[i] * y[i] * b_v[j]; }
+        }
+        auto get_A = [&](int i, int j) -> double { if (i < j) std::swap(i, j); if (i - j > kd) return 0.0; return AB(i-j, j); };
+        Eigen::VectorXd d2_v(order_); bspline::eval_bspline_basis(knots_[order_-1], order_, knots_, s_i, d2_v, 2);
+        double v0 = d2_v[0], v1 = d2_v[1], v2 = d2_v[2]; if (std::abs(v0) < 1e-12) throw std::runtime_error("Leading zero: v0=" + std::to_string(v0));
+        double ws1 = -v1 / v0, ws2 = -v2 / v0, a00 = get_A(0,0), a01 = get_A(1,0), a02 = get_A(2,0), a03 = get_A(3,0), a11 = get_A(1,1), a12 = get_A(2,1), a13 = get_A(3,1), a22 = get_A(2,2), a23 = get_A(3,2);
+        AB(0, 1) = a11 + 2*ws1*a01 + ws1*ws1*a00; AB(1, 1) = a12 + ws1*a02 + ws2*a01 + ws1*ws2*a00; AB(0, 2) = a22 + 2*ws2*a02 + ws2*ws2*a00;
+        if (kd >= 3) { AB(2, 1) = a13 + ws1*a03; AB(1, 2) = a23 + ws2*a03; }
+        b[1] += ws1 * b[0]; b[2] += ws2 * b[0];
+        bspline::eval_bspline_basis(knots_[knots_.size() - order_], order_, knots_, s_i, d2_v, 2);
+        int iN1 = n-1-s_i, iN2 = n-2-s_i, iN3 = n-3-s_i;
+        double u0 = d2_v[iN1], u1 = d2_v[iN2], u2 = d2_v[iN3]; if (std::abs(u0) < 1e-12) throw std::runtime_error("Trailing zero: u0=" + std::to_string(u0));
+        double we1 = -u1 / u0, we2 = -u2 / u0, an11 = get_A(n-1, n-1), an12 = get_A(n-1, n-2), an13 = get_A(n-1, n-3), an14 = get_A(n-1, n-4), an22 = get_A(n-2, n-2), an23 = get_A(n-2, n-3), an24 = get_A(n-2, n-4), an33 = get_A(n-3, n-3), an34 = get_A(n-3, n-4);
+        AB(0, n-2) = an22 + 2*we1*an12 + we1*we1*an11; AB(1, n-3) = an23 + we1*an13 + we2*an12 + we1*we2*an11; AB(0, n-3) = an33 + 2*we2*an13 + we2*we2*an11;
+        if (kd >= 3) { AB(2, n-4) = an24 + we1*an14; AB(1, n-4) = an34 + we2*an14; }
+        b[n-2] += we1 * b[n-1]; b[n-3] += we2 * b[n-1];
+        int n_r = n - 2, nrhs = 1, info = 0; char u_c = 'L'; dpbsv_(&u_c, &n_r, &kd, &nrhs, AB.data() + ldab * 1, &ldab, b.data() + 1, &n, &info);
+        if (info > 0) {
+            Eigen::MatrixXd Af = Eigen::MatrixXd::Zero(n_r, n_r);
+            for (int j = 0; j < n_r; ++j) { for (int r = 0; r <= kd; ++r) { if (j + r < n_r) { double v = AB(r, j + 1); Af(j + r, j) = v; Af(j, j + r) = v; } } }
+            Eigen::LDLT<Eigen::MatrixXd> sol; sol.compute(Af); b.segment(1, n_r) = sol.solve(b.segment(1, n_r));
+        }
+        coeffs_ = b; coeffs_[0] = ws1 * coeffs_[1] + ws2 * coeffs_[2]; coeffs_[n-1] = we1 * coeffs_[n-2] + we2 * coeffs_[n-3];
+    }
+    Eigen::VectorXd predict(const Eigen::Ref<const Eigen::VectorXd>& x_n, int deriv=0) {
+        Eigen::VectorXd y_p(x_n.size()), b_v(order_); int s_i; double d_min = knots_[order_-1], d_max = knots_[knots_.size() - order_];
+        for (int i = 0; i < (int)x_n.size(); ++i) {
+            double val = x_n[i];
+            if (val < d_min || val > d_max) {
+                double b_u = (val < d_min) ? d_min : d_max; bspline::eval_bspline_basis(b_u, order_, knots_, s_i, b_v, 0);
+                double f_v = 0.0; for(int j=0; j<order_; ++j) { int idx = s_i + j; if(idx < n_basis_) f_v += coeffs_[idx] * b_v[j]; }
+                bspline::eval_bspline_basis(b_u, order_, knots_, s_i, b_v, 1);
+                double f_s = 0.0; for(int j=0; j<order_; ++j) { int idx = s_i + j; if(idx < n_basis_) f_s += coeffs_[idx] * b_v[j]; }
+                y_p[i] = (deriv == 0) ? f_v + f_s * (val - b_u) : (deriv == 1 ? f_s : 0.0);
+            } else {
+                bspline::eval_bspline_basis(val, order_, knots_, s_i, b_v, deriv);
+                double f_v = 0.0; for(int j=0; j<order_; ++j) { int idx = s_i + j; if(idx < n_basis_) f_v += coeffs_[idx] * b_v[j]; }
+                y_p[i] = f_v;
+            }
+        }
+        return y_p;
     }
 };
 
 PYBIND11_MODULE(_spline_extension, m) {
-    m.doc() = "C++ implementation of SplineFitter core components"; 
-    
-    m.def("compute_natural_spline_basis", &compute_natural_spline_basis, 
-          "Compute the Natural Cubic Spline Basis matrix",
-          py::arg("x"), py::arg("knots"), py::arg("extrapolate_linear") = true,
-          py::arg("derivative_order") = 0);
-          
-    m.def("compute_penalty_matrix", &compute_penalty_matrix,
-          "Compute the penalty matrix Omega",
-          py::arg("knots"));
-          
-    py::class_<SplineFitterCpp>(m, "SplineFitterCpp")
-        .def(py::init<const Eigen::Ref<const Eigen::VectorXd>&, 
-                      const Eigen::Ref<const Eigen::VectorXd>&,
-                      py::object>(),
-             py::arg("x"), py::arg("knots"), py::arg("weights") = py::none())
-        .def("fit", &SplineFitterCpp::fit, "Solve for spline coefficients",
-             py::arg("y"), py::arg("lamval"))
-        .def("update_weights", &SplineFitterCpp::update_weights, "Update weights without recomputing basis",
-             py::arg("weights"))
-        .def("compute_df", &SplineFitterCpp::compute_df, "Compute degrees of freedom for lambda",
-             py::arg("lamval"))
-        .def("gcv_score", &SplineFitterCpp::gcv_score, "Compute GCV score",
-             py::arg("lamval"), py::arg("y"))
-        .def("solve_for_df", &SplineFitterCpp::solve_for_df, "Find lambda for target DF",
-             py::arg("target_df"))
-        .def("solve_gcv", &SplineFitterCpp::solve_gcv, "Solve for GCV optimal lambda",
-             py::arg("y"), py::arg("min_log_lam") = -12.0, py::arg("max_log_lam") = 12.0)
-        .def("predict", &SplineFitterCpp::predict, "Predict at new points",
-             py::arg("x_new"), py::arg("deriv")=0)
-        .def("get_N", &SplineFitterCpp::get_N)
-        .def("get_Omega", &SplineFitterCpp::get_Omega);
-
-    py::class_<SplineFitterReinschCpp>(m, "SplineFitterReinschCpp")
-        .def(py::init<const Eigen::Ref<const Eigen::VectorXd>&,
-                      py::object>(),
-             py::arg("x"), py::arg("weights") = py::none())
-        .def("fit", &SplineFitterReinschCpp::fit, "Fit using Reinsch algorithm",
-             py::arg("y"), py::arg("lamval"))
-        .def("update_weights", &SplineFitterReinschCpp::update_weights, "Update weights",
-             py::arg("weights"))
-        .def("compute_df", &SplineFitterReinschCpp::compute_df, "Compute DF",
-             py::arg("lamval"))
-        .def("compute_df_sparse", &SplineFitterReinschCpp::compute_df_sparse, "Compute DF using sparse solve",
-             py::arg("lamval"))
-        .def("gcv_score", &SplineFitterReinschCpp::gcv_score, "Compute GCV score",
-             py::arg("lamval"), py::arg("y"))
-        .def("solve_for_df", &SplineFitterReinschCpp::solve_for_df, "Find lambda for target DF",
-             py::arg("target_df"))
-        .def("solve_gcv", &SplineFitterReinschCpp::solve_gcv, "Solve for GCV optimal lambda",
-             py::arg("y"), py::arg("min_log_lam") = -12.0, py::arg("max_log_lam") = 12.0)
-        .def("predict", &SplineFitterReinschCpp::predict, "Predict at new points",
-             py::arg("x_new"), py::arg("deriv")=0);
-
-    py::class_<CubicSplineTraceCpp>(m, "CubicSplineTraceCpp")
-        .def(py::init<const Eigen::Ref<const Eigen::VectorXd>&, py::object>(), 
-             py::arg("x"), py::arg("weights") = py::none())
-        .def("compute_trace", &CubicSplineTraceCpp::compute_trace, "Compute trace for a given lambda",
-             py::arg("lam"));
+    py::class_<SplineFitterCpp>(m, "SplineFitterCpp").def(py::init<const Eigen::Ref<const Eigen::VectorXd>&, const Eigen::Ref<const Eigen::VectorXd>&, py::object>()).def("fit", &SplineFitterCpp::fit).def("update_weights", &SplineFitterCpp::update_weights).def("compute_df", &SplineFitterCpp::compute_df).def("gcv_score", &SplineFitterCpp::gcv_score).def("solve_for_df", &SplineFitterCpp::solve_for_df).def("solve_gcv", &SplineFitterCpp::solve_gcv).def("predict", &SplineFitterCpp::predict).def("get_N", &SplineFitterCpp::get_N).def("get_Omega", &SplineFitterCpp::get_Omega);
+    py::class_<SplineFitterReinschCpp>(m, "SplineFitterReinschCpp").def(py::init<const Eigen::Ref<const Eigen::VectorXd>&, py::object>()).def("fit", &SplineFitterReinschCpp::fit).def("update_weights", &SplineFitterReinschCpp::update_weights).def("compute_df", &SplineFitterReinschCpp::compute_df).def("compute_df_sparse", &SplineFitterReinschCpp::compute_df_sparse).def("gcv_score", &SplineFitterReinschCpp::gcv_score).def("solve_for_df", &SplineFitterReinschCpp::solve_for_df).def("solve_gcv", &SplineFitterReinschCpp::solve_gcv).def("predict", &SplineFitterReinschCpp::predict);
+    py::class_<CubicSplineTraceCpp>(m, "CubicSplineTraceCpp").def(py::init<const Eigen::Ref<const Eigen::VectorXd>&, py::object>()).def("compute_trace", &CubicSplineTraceCpp::compute_trace);
+    py::class_<SplineFitterBSpline>(m, "SplineFitterBSpline").def(py::init<const Eigen::Ref<const Eigen::VectorXd>&, const Eigen::Ref<const Eigen::VectorXd>&, py::object, int>()).def("fit", &SplineFitterBSpline::fit).def("predict", &SplineFitterBSpline::predict).def("get_NTWN", &SplineFitterBSpline::get_NTWN).def("get_Omega", &SplineFitterBSpline::get_Omega).def("get_knots", &SplineFitterBSpline::get_knots).def("eval_basis", &SplineFitterBSpline::eval_basis, py::arg("x_val"), py::arg("deriv")=0);
 }
