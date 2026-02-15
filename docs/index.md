@@ -5,5 +5,6 @@
 :caption: Contents:
 
 theory.md
-compare_R.ipynb
+compare_R.md
+compare_scipy.md
 ```
