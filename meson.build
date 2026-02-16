@@ -38,7 +38,15 @@ py.extension_module(
 
 # Install Python sources
 # This installs the 'smoothing_spline' python package.
-install_subdir('smoothing_spline', 
-  install_dir : py.get_install_dir(),
-  exclude_directories : ['__pycache__']
+py.install_sources(
+    [
+        'smoothing_spline/__init__.py',
+        'smoothing_spline/datasets.py',
+        'smoothing_spline/fitter.py',
+    ],
+    subdir: 'smoothing_spline'
+)
+install_subdir(
+    'smoothing_spline/data',
+    install_dir: py.get_install_dir() / 'smoothing_spline'
 )
