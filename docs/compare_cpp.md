@@ -121,7 +121,6 @@ results_fixed_bspline = benchmark_fitters(ns_large, n_knots=K, engine='bspline',
 
 ```{code-cell} ipython3
 fig, ax = plt.subplots(figsize=(10, 6))
-ax.plot(ns_large, results_fixed_natural, 's-', label=f"C++ 'natural' (K={K})")
 ax.plot(ns_large, results_fixed_bspline, 'd-', label=f"C++ 'bspline' (K={K})")
 
 ax.set_xlabel('Number of observations (N)')
