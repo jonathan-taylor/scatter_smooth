@@ -65,11 +65,12 @@ class SplineFitter:
         self._setup_scaling_and_knots()
         self._prepare_matrices()
         
+        self._cholesky_cache = {}
         if self.df is not None:
             self.lamval = self._find_lamval_for_df(self.df)
         elif self.lamval is None:
             self.lamval = 0.0
-
+        
     def _setup_scaling_and_knots(self):
         """
         Compute the scaled values and knots required for both
@@ -151,7 +152,7 @@ class SplineFitter:
         else:
             raise ValueError(f"Unknown engine: {self.engine}")
 
-    def compute_df(self, lamval=None):
+    def compute_df(self, lamval=None, eps=1e-12):
         """
         Compute the degrees of freedom for a given lambda.
         """
@@ -161,23 +162,28 @@ class SplineFitter:
         lam_scaled = lamval / (self.x_scale_ ** 3)
         
         if self.engine == 'bspline':
-            NTWN = self._cpp_fitter.compute_design()
+            if not hasattr(self, "_NTWN"):
+                self._NTWN = self._cpp_fitter.compute_design()
+            NTWN = self._NTWN
             Omega = self._cpp_fitter.compute_penalty()
             n = NTWN.shape[1]
             NTWN_sub = NTWN[:, 1:n-1]
             Omega_sub = Omega[:, 1:n-1]
+            Omega_sub[-1] += eps * np.mean(Omega_sub[-1])
+            NTWN_sub[-1] += eps * np.mean(NTWN_sub[-1])
             
             # Matrices are already in Upper Banded format
             
             # DF = Tr((NTWN + lam*Omega)^-1 * NTWN)
             # trace_ratio_banded(A, B) = Tr((A+B)^-1 * B)
             # So A = lam*Omega, B = NTWN
-            trace, self._cholesky = trace_ratio_banded(lam_scaled * Omega_sub, NTWN_sub)
+            trace, _chol = trace_ratio_banded(lam_scaled * Omega_sub, NTWN_sub)
+            self._cholesky_cache[lam_scaled] = _chol
             return trace
         else:
             return self._cpp_fitter.compute_df(lam_scaled)
 
-    def _find_lamval_for_df(self, target_df, log10_lam_bounds=(-20, 20)):
+    def _find_lamval_for_df(self, target_df, log10_lam_bounds=(-8, 12)):
         """
         Finds the exact lambda value that yields the target degrees of freedom.
         """
@@ -197,10 +203,10 @@ class SplineFitter:
             def objective(log_lam):
                 return self.compute_df(10**log_lam) - target_df
             
-            try:
+            if True:
                 log_lam_opt = brentq(objective, min_log + shift, max_log + shift)
                 return 10**log_lam_opt
-            except ValueError:
+            else: # except ValueError:
                 # Fallback or wider search?
                 return self._cpp_fitter.solve_for_df(target_df, min_log, max_log) * (self.x_scale_ ** 3)
         else:
@@ -273,7 +279,7 @@ class SplineFitter:
              self._cpp_fitter.fit(y_eff, lam_scaled)
         else:
              if self.engine == 'bspline':
-                 NTWN = self._cpp_fitter.compute_design()
+                 NTWN = self._NTWN
                  Omega = self._cpp_fitter.compute_penalty()
                  b = self._cpp_fitter.compute_rhs(y_arr)
                  AB = NTWN + lam_scaled * Omega
@@ -285,11 +291,11 @@ class SplineFitter:
                  ab_sub = AB[:, 1:n-1]
                  b_sub = b[1:n-1]
                  
-                 if not hasattr(self, "_cholesky"):
-                     self.compute_df()
-                 sol1 = cho_solve_banded((self._cholesky, False), b_sub)
-                 sol = solveh_banded(ab_sub, b_sub)
-                 print(np.linalg.norm(sol1 - sol)/np.linalg.norm(sol))
+                 if lam_scaled in self._cholesky_cache:
+                     _chol = self._cholesky_cache[lam_scaled]
+                     sol = cho_solve_banded((_chol, False), b_sub)
+                 else:
+                     sol = solveh_banded(ab_sub, b_sub)
                  self._cpp_fitter.set_solution(sol)
              else:
                  self._cpp_fitter.fit(y_arr, lam_scaled)
@@ -351,7 +357,7 @@ class SplineFitter:
         else:
              # Re-create fitter if update_weights is not supported (e.g. BSpline currently)
              self._prepare_matrices()
-
+        
     # Expose N and Omega if available (Natural Spline only usually)
     @property
     def N_(self):
