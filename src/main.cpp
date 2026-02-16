@@ -14,8 +14,8 @@ PYBIND11_MODULE(_spline_extension, m) {
         .def("update_weights", &NaturalSplineFitter::update_weights)
         .def("compute_df", &NaturalSplineFitter::compute_df)
         .def("gcv_score", &NaturalSplineFitter::gcv_score)
-        .def("solve_for_df", &NaturalSplineFitter::solve_for_df)
-        .def("solve_gcv", &NaturalSplineFitter::solve_gcv)
+        .def("solve_for_df", &NaturalSplineFitter::solve_for_df, py::arg("target_df"), py::arg("min_log_lam") = -12.0, py::arg("max_log_lam") = 12.0)
+        .def("solve_gcv", &NaturalSplineFitter::solve_gcv, py::arg("y"), py::arg("min_log_lam") = -12.0, py::arg("max_log_lam") = 12.0)
         .def("predict", &NaturalSplineFitter::predict)
         .def("get_N", &NaturalSplineFitter::get_N)
         .def("get_Omega", &NaturalSplineFitter::get_Omega);
@@ -28,8 +28,8 @@ PYBIND11_MODULE(_spline_extension, m) {
         .def("compute_df", &ReinschFitter::compute_df)
         .def("compute_df_sparse", &ReinschFitter::compute_df_sparse)
         .def("gcv_score", &ReinschFitter::gcv_score)
-        .def("solve_for_df", &ReinschFitter::solve_for_df)
-        .def("solve_gcv", &ReinschFitter::solve_gcv)
+        .def("solve_for_df", &ReinschFitter::solve_for_df, py::arg("target_df"), py::arg("min_log_lam") = -12.0, py::arg("max_log_lam") = 12.0)
+        .def("solve_gcv", &ReinschFitter::solve_gcv, py::arg("y"), py::arg("min_log_lam") = -12.0, py::arg("max_log_lam") = 12.0)
         .def("predict", &ReinschFitter::predict);
 
     py::class_<CubicSplineTraceCpp>(m, "CubicSplineTraceCpp")
@@ -44,8 +44,8 @@ PYBIND11_MODULE(_spline_extension, m) {
         .def("fit", &BSplineFitter::fit)
         .def("compute_df", &BSplineFitter::compute_df)
         .def("gcv_score", &BSplineFitter::gcv_score)
-        .def("solve_for_df", &BSplineFitter::solve_for_df)
-        .def("solve_gcv", &BSplineFitter::solve_gcv)
+        .def("solve_for_df", &BSplineFitter::solve_for_df, py::arg("target_df"), py::arg("min_log_lam") = -12.0, py::arg("max_log_lam") = 12.0)
+        .def("solve_gcv", &BSplineFitter::solve_gcv, py::arg("y"), py::arg("min_log_lam") = -12.0, py::arg("max_log_lam") = 12.0)
         .def("predict", &BSplineFitter::predict)
         .def("get_NTWN", &BSplineFitter::get_NTWN)
         .def("get_Omega", &BSplineFitter::get_Omega)

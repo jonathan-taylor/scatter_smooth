@@ -29,7 +29,7 @@ public:
     Eigen::VectorXd predict(const Eigen::Ref<const Eigen::VectorXd>& x_new, int deriv=0);
     double compute_df(double lamval);
     double gcv_score(double lamval, const Eigen::Ref<const Eigen::VectorXd>& y);
-    double solve_for_df(double target_df);
+    double solve_for_df(double target_df, double min_log_lam = -12.0, double max_log_lam = 12.0);
     double solve_gcv(const Eigen::Ref<const Eigen::VectorXd>& y, double min_log_lam = -12.0, double max_log_lam = 12.0);
     Eigen::MatrixXd get_N();
     Eigen::MatrixXd get_Omega();

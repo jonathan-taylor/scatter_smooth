@@ -149,9 +149,9 @@ double ReinschFitter::gcv_score(double lamval, const Eigen::Ref<const Eigen::Vec
     return (denom < 1e-6) ? 1e20 : (rss / n) / (denom * denom);
 }
 
-double ReinschFitter::solve_for_df(double target_df) {
+double ReinschFitter::solve_for_df(double target_df, double min_log_lam, double max_log_lam) {
     auto func = [&](double log_lam) { return compute_df(std::pow(10.0, log_lam)) - target_df; };
-    return std::pow(10.0, utils::brent_root(func, -12.0, 12.0));
+    return std::pow(10.0, utils::brent_root(func, min_log_lam, max_log_lam));
 }
 
 double ReinschFitter::solve_gcv(const Eigen::Ref<const Eigen::VectorXd>& y, double min_log_lam, double max_log_lam) {

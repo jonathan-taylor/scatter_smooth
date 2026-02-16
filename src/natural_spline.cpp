@@ -263,9 +263,9 @@ double NaturalSplineFitter::gcv_score(double lamval, const Eigen::Ref<const Eige
     return (rss / n) / (denom * denom);
 }
 
-double NaturalSplineFitter::solve_for_df(double target_df) {
+double NaturalSplineFitter::solve_for_df(double target_df, double min_log_lam, double max_log_lam) {
     auto func = [&](double log_lam) { return compute_df(std::pow(10.0, log_lam)) - target_df; };
-    return std::pow(10.0, utils::brent_root(func, -12.0, 12.0));
+    return std::pow(10.0, utils::brent_root(func, min_log_lam, max_log_lam));
 }
 
 double NaturalSplineFitter::solve_gcv(const Eigen::Ref<const Eigen::VectorXd>& y, double min_log_lam, double max_log_lam) {
