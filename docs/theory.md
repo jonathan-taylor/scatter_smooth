@@ -44,19 +44,19 @@ $$
 
 ### Reinsch Form vs. Basis Form
 
-There are two primary ways to compute the solution.
+There are three primary ways to compute the solution in our package:
 
-#### A. The Basis Form (Used in this Package and for $K=N$)
+#### A. The Natural Spline Basis Form (`engine='natural'`)
 We explicitly construct the basis matrix $N$ and the penalty matrix $\Omega$.
 - We use the property that a natural cubic spline is determined by its values and second derivatives at the knots.
 - Our C++ implementation constructs $N$ efficiently by solving the tridiagonal system that relates second derivatives to values.
 - We then solve the dense linear system $(N^T N + \lambda \Omega)\theta = N^T y$.
 
 **Why Basis Form?**
-- Allows for **Regression Splines**: We can choose fewer knots than data points ($K < N$). The math remains identical, but the matrices are smaller ($K 	\times K$ instead of $N \times N$).
+- Allows for **Regression Splines**: We can choose fewer knots than data points ($K < N$). The math remains identical, but the matrices are smaller ($K \times K$ instead of $N \times N$).
 - Easier to extend to weighted least squares or other loss functions.
 
-#### B. The Reinsch Form (Used in R's `smooth.spline`)
+#### B. The Reinsch Form (`engine='reinsch'`)
 If knots are placed at every data point ($K=N$), the solution vector $\mathbf{f} = (f(x_1), \dots, f(x_N))^T$ can be found directly without forming $N$.
 $$
 \hat{\mathbf{f}} = (I + \lambda K)^{-1} y
@@ -65,36 +65,13 @@ where $K = Q R^{-1} Q^T$.
 - $Q$ is an $N \times (N-2)$ tridiagonal matrix of second differences.
 - $R$ is an $(N-2) \times (N-2)$ tridiagonal matrix.
 
-These matrices can be constructed in Python as follows:
-```python
-import numpy as np
-from scipy import sparse
+This allows solving the system in $O(N)$ time using banded solvers, making it extremely fast for large $N$. This matches the algorithm used in R's `smooth.spline`.
 
-def get_qr_matrices(knots):
-    n_k = len(knots)
-    hk = np.diff(knots)
-    inv_hk = 1.0 / hk
-    
-    # R is a symmetric tridiagonal matrix
-    R_k = sparse.diags(
-        [hk[1:-1] / 6.0, (hk[:-1] + hk[1:]) / 3.0, hk[1:-1] / 6.0],
-        [-1, 0, 1],
-        shape=(n_k - 2, n_k - 2),
-    )
-    
-    # Q is a tridiagonal matrix with 3 diagonals
-    Q_k = sparse.diags(
-        [inv_hk[:-1], -inv_hk[:-1] - inv_hk[1:], inv_hk[1:]],
-        [0, -1, -2],
-        shape=(n_k, n_k - 2),
-    )
-    return Q_k, R_k
-```
-
-This allows solving the system in $O(N)$ time using banded solvers, making it extremely fast for large $N$.
-
-**Our Implementation Note:**
-While we use the basis form, our construction of $\Omega$ utilizes the exact same $Q R^{-1} Q^T$ structure (computed via sparse Cholesky) to ensure mathematical equivalence to the integral penalty.
+#### C. The B-Spline Basis Form (`engine='bspline'`)
+Uses the B-spline basis with compact support.
+- Constructs banded matrices for the normal equations.
+- Solves using LAPACK's `dpbsv`.
+- Efficient for both $K=N$ and $K<N$.
 
 ## 3. Degrees of Freedom ($df$)
 
@@ -105,22 +82,18 @@ df(\lambda) = \text{trace}(\mathbf{S}_\lambda)
 $$
 
 where $\mathbf{S}_\lambda$ is the smoother matrix such that $\hat{y} = \mathbf{S}_\lambda y$.
-In our formulation:
-$$
-\mathbf{S}_\lambda = N (N^T N + \lambda \Omega)^{-1} N^T
-$$
 
-The relationship between $df$ and $\lambda$ is monotonic.
-- $df \to 2$ as $\lambda \to \infty$ (Linear fit).
-- $df  \to N$ as $\lambda \to 0$ (Interpolation).
+For the Reinsch form, we compute the trace in $O(N)$ time using Takahashi's equations (calculating selected elements of the inverse of a banded matrix via Cholesky decomposition).
 
-Our package allows specifying `df` directly. We use a root-finding algorithm (Brent's method) to find the unique $\lambda$ that yields the requested $df$.
+For the Basis form (Natural), we compute the trace of the dense matrix inverse.
+
+For the B-spline form, exact trace computation can be expensive, so we may rely on approximations or converting to Reinsch form if applicable.
 
 ## 4. Comparison with R's `smooth.spline`
 
 | Feature | `smooth.spline` (R) | `smoothing_spline` (Python) |
 | :--- | :--- | :--- |
-| **Algorithm** | Reinsch Form ($O(N)$) | Basis Form ($O(NK^2)$ or $O(K^3)$) |
+| **Algorithm** | Reinsch Form ($O(N)$) | `engine='auto'` (selects best), `engine='reinsch'` ($O(N)$), `engine='natural'` ($O(NK^2)$), `engine='bspline'` (Banded) |
 | **Knots** | All unique $x$ (default) or $nknots$ | All unique $x$ or specified `n_knots` |
 | **Input $\lambda$** | Via `spar` or `lambda` | Via `lamval` |
 | **Input $df$** | Supported | Supported (via root finding) |
@@ -131,6 +104,9 @@ Our package allows specifying `df` directly. We use a root-finding algorithm (Br
 
 ### Key Differences
 1.  **Speed:** For $N=10,000$, `smooth.spline` is faster because it exploits the band structure of the full system. Our implementation allows `n_knots < N` (Regression Splines), which restores speed ($O(N K^2)$) and reduces overfitting risk, a feature `smooth.spline` supports via `nknots`.
+    - `engine='reinsch'`: Fast $O(N)$ implementation for when knots = unique $x$. Matches `smooth.spline` performance.
+    - `engine='natural'`: Uses the natural cubic spline basis. Good for general use and when $K < N$.
+    - `engine='bspline'`: Uses B-spline basis. Efficient and stable, good for sparse matrices.
 2.  **Spar (R specific):** R uses a scaling parameter `spar` related to $\lambda$. We use raw $\lambda$ (scaled by $x$-range cubed for numerical stability).
 
 ## 5. References

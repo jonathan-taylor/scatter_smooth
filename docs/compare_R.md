@@ -1,6 +1,6 @@
 ---
 jupytext:
-  formats: md:myst
+  formats: ipynb,md:myst
   text_representation:
     extension: .md
     format_name: myst
@@ -198,7 +198,7 @@ spl_log.fit(log_bikers)
 fig, ax = plt.subplots(figsize=(10, 6))
 ax.scatter(hr_numeric + np.random.normal(0, 0.1, len(hr_numeric)), log_bikers, 
             s=1, c='lightgray')
-ax.plot(x_plot, spl_log.predict(x_plot), 'purple', lw=3, label='Log-Smoothing Spline (df={df})')
+ax.plot(x_plot, spl_log.predict(x_plot), 'purple', lw=3, label=f'Log-Smoothing Spline (df={df})')
 ax.set_xlabel("Hour")
 ax.set_ylabel("Log(Number of Bikers + 1)")
 ax.legend()
@@ -211,7 +211,7 @@ Finally, we compare the speed of both implementations on a synthetic dataset wit
 
 ```{code-cell} ipython3
 # Synthetic data
-n_syn = 500
+n_syn = 1000
 rng = np.random.default_rng(0)
 x_syn = np.sort(rng.uniform(0, 10, n_syn))
 y_syn = np.sin(x_syn) + rng.normal(0, 0.1, n_syn)
@@ -250,18 +250,18 @@ To make a fair speed comparison, we can limit the number of knots in Python as w
 n_syn = 10000
 x_syn = np.sort(rng.uniform(0, 10, n_syn))
 y_syn = np.sin(x_syn) + rng.normal(0, 0.1, n_syn)
-n_knots_reduced = 200 # Similar to R's behavior
+n_knots_reduced = 1000 # Similar to R's behavior
 print(f"Python Timing (n={n_syn}, n_knots={n_knots_reduced}):")
-%timeit SplineFitter(x=x_syn, df=10, n_knots=n_knots_reduced).fit(y_syn)
+%timeit SplineFitter(x=x_syn, lamval=1e-3, n_knots=n_knots_reduced).fit(y_syn)
 ```
 
 ```{code-cell} ipython3
-%%R -i x_syn -i y_syn
+%%R -i x_syn -i y_syn -i n_knots_reduced
 library(microbenchmark)
 cat(sprintf("R Timing (n=%d):\n", length(x_syn)))
 
 # Fit once to inspect knots
-fit_r_syn <- smooth.spline(x_syn, y_syn, df=10, nknots=200)
+fit_r_syn <- smooth.spline(x_syn, y_syn, df=10, nknots=n_knots_reduced)
 n_knots_r <- fit_r_syn$fit$nk
 cat(sprintf("Number of knots used by R: %d\n", n_knots_r))
 
@@ -277,4 +277,12 @@ While the C++ implementation offers significant speedups over the pure Python ve
 
 For large $N$, the Hutchinson estimator (randomized trace estimation) is used to mitigate this cost, reducing the complexity to $O(k \cdot N)$ where $k$ is the number of random vectors (default 30).
 
-**TODO:** Implement exact $O(N)$ trace calculation for pentadiagonal matrices to match R's performance for exact EDF.
+**Note:** We have recently implemented the exact $O(N)$ trace calculation using Takahashi's equations in the `engine='reinsch'` implementation, which matches R's performance for exact EDF.
+
+```{code-cell} ipython3
+
+```
+
+```{code-cell} ipython3
+
+```
