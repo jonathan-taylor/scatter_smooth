@@ -1,1 +1,1 @@
-import{a}from"/build/_shared/chunk-GS4MV65Q.js";import"/build/_shared/chunk-OZE3FFNP.js";export default a();
+import{a}from"https://jonathan-taylor.github.io/smoothing_spline//build/_shared/chunk-GS4MV65Q.js";import"https://jonathan-taylor.github.io/smoothing_spline//build/_shared/chunk-OZE3FFNP.js";export default a();

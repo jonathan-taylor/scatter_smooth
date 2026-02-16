@@ -7,9 +7,9 @@ jupytext:
     format_version: 0.13
     jupytext_version: 1.19.1
 kernelspec:
-  name: python3
   display_name: Python 3 (ipykernel)
   language: python
+  name: python3
 ---
 
 # Boundary Behavior Comparison: `smoothing_spline` vs `scipy`
@@ -30,7 +30,7 @@ from smoothing_spline import SplineFitter
 
 # Generate synthetic data
 rng = np.random.default_rng(42)
-n = 30
+n = 50
 x = np.sort(rng.uniform(0, 10, n))
 y = np.sin(x) + rng.normal(0, 0.2, n)
 
@@ -49,7 +49,7 @@ For simplicity, let's fix a lambda value that provides a reasonable smooth fit.
 # Fit smoothing_spline
 # We explicitly ask for a specific lambda or let GCV find one.
 # Let's use GCV for smoothing_spline to get a good fit first.
-fitter = SplineFitter(x)
+fitter = SplineFitter(x, n_knots=25)
 lam_best = fitter.solve_gcv(y)
 y_ours = fitter.predict(x_plot)
 
