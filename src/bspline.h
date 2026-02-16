@@ -22,5 +22,10 @@ public:
     Eigen::MatrixXd get_Omega();
     std::pair<Eigen::MatrixXd, Eigen::VectorXd> compute_system(const Eigen::Ref<const Eigen::VectorXd>& y, double lamval);
     void set_solution(const Eigen::Ref<const Eigen::VectorXd>& sol);
+    Eigen::VectorXd fit(const Eigen::Ref<const Eigen::VectorXd>& y, double lamval); // Added fit method signature
+    double compute_df(double lamval);
+    double gcv_score(double lamval, const Eigen::Ref<const Eigen::VectorXd>& y);
+    double solve_for_df(double target_df);
+    double solve_gcv(const Eigen::Ref<const Eigen::VectorXd>& y, double min_log_lam = -12.0, double max_log_lam = 12.0);
     Eigen::VectorXd predict(const Eigen::Ref<const Eigen::VectorXd>& x_n, int deriv=0);
 };

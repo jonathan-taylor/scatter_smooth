@@ -44,10 +44,9 @@ def test_compare_bspline_natural_spline(n_samples, weighted, unequal_x):
             raise e
     
     y_pred_bs = sf_bs.predict(x)
-    
+
     # Check interior agreement
     mse = np.mean((y_pred_ns - y_pred_bs)**2)
-    print(f"MSE: {mse:.2e}")
     
     # Check extrapolation
     x_extra = np.linspace(-0.1, 1.1, 51)
@@ -55,16 +54,44 @@ def test_compare_bspline_natural_spline(n_samples, weighted, unequal_x):
     y_extra_bs = sf_bs.predict(x_extra)
     
     mse_extra = np.mean((y_extra_ns - y_extra_bs)**2)
-    print(f"Extrapolation MSE: {mse_extra:.2e}")
     
     # Assert correlation > 0.99
     corr = np.corrcoef(y_pred_ns, y_pred_bs)[0, 1]
     assert corr > 0.999
     
     # Assert extrapolation is reasonably close
-    # Since both use linear extrapolation, they should be somewhat close, 
-    # but the slopes at boundaries might differ slightly due to different penalty matrices.
     assert mse_extra < 1e-6
 
-if __name__ == "__main__":
-    test_compare_bspline_natural_spline(100, False, False)
+def test_bspline_solve_for_df():
+    rng = np.random.default_rng(42)
+    n = 50
+    x = np.sort(rng.uniform(0, 1, n))
+    y = np.sin(2 * np.pi * x) + rng.normal(0, 0.1, n)
+    n_knots = 15
+    knots = np.linspace(0, 1, n_knots)
+    
+    target_df = 8.0
+    
+    # Fit with B-spline engine specifying df
+    fitter = SplineFitter(x, knots=knots, df=target_df, engine='bspline')
+    fitter.fit(y)
+    
+    # Verify effective degrees of freedom
+    # We can compute it manually using the fitted lambda
+    lam_scaled = fitter.lamval / fitter.x_scale_**3
+    computed_df = fitter._cpp_fitter.compute_df(lam_scaled)
+    
+    assert np.isclose(computed_df, target_df, rtol=1e-4)
+
+def test_bspline_solve_gcv():
+    rng = np.random.default_rng(43)
+    n = 50
+    x = np.sort(rng.uniform(0, 1, n))
+    y = np.sin(2 * np.pi * x) + rng.normal(0, 0.1, n)
+    knots = np.linspace(0, 1, 15)
+    
+    fitter = SplineFitter(x, knots=knots, engine='bspline')
+    best_lam = fitter.solve_gcv(y)
+    
+    assert best_lam > 0
+    assert fitter.lamval == best_lam
