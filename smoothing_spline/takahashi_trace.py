@@ -133,7 +133,7 @@ def trace_ratio_banded(A_band, B_band):
     Z_band = takahashi_upper(U_factor)
     
     # Trace(Z * B)
-    return trace_product_banded(Z_band, B_band)
+    return trace_product_banded(Z_band, B_band), U_factor
 
 def band_to_dense(ab, w, N):
     """Helper to expand banded storage to dense matrix for verification."""

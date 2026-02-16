@@ -12,15 +12,27 @@ namespace bspline {
 
 class BSplineFitter {
     int order_; Eigen::VectorXd knots_, coeffs_, weights_, x_; int n_basis_; Eigen::MatrixXd AB_template_, Omega_band_;
+    
+    void get_boundary_weights(double& ws1, double& ws2, double& we1, double& we2);
+    void apply_constraints(Eigen::MatrixXd& M);
+    void apply_constraints(Eigen::VectorXd& v);
+
 public:
     BSplineFitter(const Eigen::Ref<const Eigen::VectorXd>& x, const Eigen::Ref<const Eigen::VectorXd>& i_k, py::object w_obj, int order = 4);
-    void compute_NTWN();
-    void compute_penalty_matrix();
+    void initialize_design();
+    void initialize_penalty();
     Eigen::VectorXd eval_basis(double x_val, int deriv=0);
     Eigen::VectorXd get_knots();
+    
+    // Returns constrained matrices in Upper Banded format
+    Eigen::MatrixXd compute_design();
+    Eigen::MatrixXd compute_penalty();
+    
+    // Returns unconstrained full matrices for debugging
     Eigen::MatrixXd get_NTWN();
     Eigen::MatrixXd get_Omega();
-    std::pair<Eigen::MatrixXd, Eigen::VectorXd> compute_system(const Eigen::Ref<const Eigen::VectorXd>& y, double lamval);
+
+    Eigen::VectorXd compute_rhs(const Eigen::Ref<const Eigen::VectorXd>& y);
     void set_solution(const Eigen::Ref<const Eigen::VectorXd>& sol);
     Eigen::VectorXd fit(const Eigen::Ref<const Eigen::VectorXd>& y, double lamval);
     double compute_df(double lamval);

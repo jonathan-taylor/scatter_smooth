@@ -34,7 +34,6 @@ try:
 except ImportError:
     print("Could not import pure Python SplineFitter from tests.")
     SplineFitterPy = None
-
 ```
 
 ## Speed Comparison at Different Scales

@@ -1,15 +1,15 @@
 ---
 jupytext:
-  formats: ipynb,md:myst
+  formats: md:myst,ipynb
   text_representation:
     extension: .md
     format_name: myst
     format_version: 0.13
     jupytext_version: 1.19.1
 kernelspec:
-  name: python3
   display_name: Python 3 (ipykernel)
   language: python
+  name: python3
 ---
 
 # Comparing `smoothing_spline` with R's `smooth.spline`
@@ -25,7 +25,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import time
-from smoothing_spline import load_bikeshare, SplineFitter
+from ISLP import load_data
+from smoothing_spline import SplineFitter
 
 %load_ext rpy2.ipython
 ```
@@ -35,8 +36,7 @@ from smoothing_spline import load_bikeshare, SplineFitter
 We will use the `Bikeshare` dataset, which contains daily counts of bike rentals in Washington D.C.
 
 ```{code-cell} ipython3
-with load_bikeshare() as f:
-    Bike = pd.read_csv(f)
+Bike = load_data('Bikeshare')
 Bike.head()
 ```
 
@@ -198,28 +198,31 @@ spl_log.fit(log_bikers)
 fig, ax = plt.subplots(figsize=(10, 6))
 ax.scatter(hr_numeric + np.random.normal(0, 0.1, len(hr_numeric)), log_bikers, 
             s=1, c='lightgray')
-ax.plot(x_plot, spl_log.predict(x_plot), 'purple', lw=3, label=f'Log-Smoothing Spline (df={df})')
+ax.plot(x_plot, spl_log.predict(x_plot), 'purple', lw=3, label='Log-Smoothing Spline (df={df})')
 ax.set_xlabel("Hour")
 ax.set_ylabel("Log(Number of Bikers + 1)")
 ax.legend()
 plt.show()
 ```
 
-## Synthetic Speed Comparison (N=500)
+## Synthetic Data Comparison (Reinsch Engine / All Knots)
 
-Finally, we compare the speed of both implementations on a synthetic dataset with 500 unique $x$ values.
+Finally, we compare the speed of both implementations on a synthetic dataset with 500 unique $x$ values. Since we use all unique $x$ values as knots, `smoothing_spline` automatically selects the efficient Reinsch engine.
 
 ```{code-cell} ipython3
 # Synthetic data
-df = 50
-n_syn = 1000
-rng = np.random.default_rng(0)
+n_syn = 500
+df = 20
+rng = np.random.default_rng(42)
 x_syn = np.sort(rng.uniform(0, 10, n_syn))
-y_syn = np.sin(x_syn) + rng.normal(0, 0.1, n_syn)
-x_plot = np.linspace(x_syn.min()-2, x_syn.max()+2, 200)
+y_syn = np.sin(np.sqrt(x_syn)*2) + rng.normal(0, 1, n_syn)
+x_plot = np.linspace(x_syn.min() - 1, x_syn.max() + 1, 200)
+
+# Python Fitting
 spline = SplineFitter(x=x_syn, df=df)
 spline.fit(y_syn)
 y_plot_py = spline.predict(x_plot)
+
 # Python Timing (using all unique x as knots)
 print(f"Python Timing (n={n_syn}, all knots):")
 %timeit SplineFitter(x=x_syn, df=df).fit(y_syn)
@@ -237,7 +240,7 @@ y_plot_R = predict(fit_r_syn, x_plot)$y
 cat(sprintf("Number of knots used by R: %d\n", n_knots_r))
 
 microbenchmark(
-  smooth.spline(x_syn, y_syn, df=df),
+  smooth.spline(x_syn, y_syn, df=df, all.knots=TRUE),
   times=100
 )
 ```
@@ -245,79 +248,71 @@ microbenchmark(
 ```{code-cell} ipython3
 fig, ax = plt.subplots(figsize=(10, 6))
 ax.scatter(x_syn, y_syn, 
-            s=1, c='lightgray', alpha=0.5, label='Data')
+            s=15, c='lightgray', alpha=0.7, label='Data')
 ax.plot(x_plot, y_plot_py, 'b-', lw=3, label='Python (smoothing_spline)', alpha=0.8)
 ax.plot(x_plot, y_plot_R, 'r--', lw=3, label='R (smooth.spline)', alpha=0.8)
-ax.set_xlabel("Hour")
-ax.set_ylabel("Number of Bikers")
-ax.set_title(f"Comparison of Smoothing Splines (df={df})")
+ax.set_xlabel("x")
+ax.set_ylabel("y")
+ax.set_title(f"Comparison of Smoothing Splines (df={df}) - Reinsch Engine")
 ax.legend()
 plt.show()
 ```
 
-## Limited knots
+## Synthetic Data Comparison (BSpline Engine / Limited Knots)
 
-+++
+R's `smooth.spline` automatically reduces the number of knots when $N > 49$ (typically to around 50-100) to speed up computation. For $N=10000$, `R` uses about 200 knots (or more depending on settings).
 
-R's `smooth.spline` automatically reduces the number of knots when $N > 49$ (typically to around 50-100) to speed up computation. For $N=10000$, `R` uses about 200 knots.
-
-To make a fair speed comparison, we can limit the number of knots in Python as well.
+To make a fair speed comparison, we can limit the number of knots in Python as well, which triggers the usage of the `bspline` engine.
 
 ```{code-cell} ipython3
 # Python Timing with reduced knots
+df = 30
 n_syn = 10000
 x_syn = np.sort(rng.uniform(0, 10, n_syn))
-y_syn = np.sin(x_syn) + rng.normal(0, 0.1, n_syn)
-n_knots_reduced = 1000 # Similar to R's behavior
+y_syn = np.sin(np.sqrt(x_syn)*2) + rng.normal(0, 1, n_syn)
+n_knots_reduced = 200 # Similar to R's behavior
 print(f"Python Timing (n={n_syn}, n_knots={n_knots_reduced}):")
-spline = SplineFitter(x=x_syn, lamval=1e-3, n_knots=n_knots_reduced)
+
+# Fit for plotting
+spline = SplineFitter(x=x_syn, df=df, n_knots=n_knots_reduced)
 spline.fit(y_syn)
 y_plot_py = spline.predict(x_plot)
-%timeit SplineFitter(x=x_syn, lamval=1e-3, n_knots=n_knots_reduced).fit(y_syn)
+
+%timeit SplineFitter(x=x_syn, df=df, n_knots=n_knots_reduced).fit(y_syn)
 ```
 
 ```{code-cell} ipython3
-%%R -i x_syn -i y_syn -i n_knots_reduced -o y_plot_R
+%%R -i x_syn -i y_syn -i n_knots_reduced -o y_plot_R -i df
 library(microbenchmark)
 cat(sprintf("R Timing (n=%d):\n", length(x_syn)))
 
 # Fit once to inspect knots
-fit_r_syn <- smooth.spline(x_syn, y_syn, df=10, nknots=n_knots_reduced)
+fit_r_syn <- smooth.spline(x_syn, y_syn, df=df, nknots=n_knots_reduced)
 y_plot_R = predict(fit_r_syn, x_plot)$y
 n_knots_r <- fit_r_syn$fit$nk
 cat(sprintf("Number of knots used by R: %d\n", n_knots_r))
 
 microbenchmark(
-  smooth.spline(x_syn, y_syn, df=10),
+  smooth.spline(x_syn, y_syn, df=df, nknots=n_knots_reduced),
   times=100
 )
 ```
 
 ```{code-cell} ipython3
 fig, ax = plt.subplots(figsize=(10, 6))
-ax.scatter(x_syn, y_syn, 
-            s=1, c='lightgray', alpha=0.5, label='Data')
+# Subsample data for plotting if N is large
+plot_idx = np.random.choice(len(x_syn), size=min(len(x_syn), 1000), replace=False)
+ax.scatter(x_syn[plot_idx], y_syn[plot_idx], 
+            s=5, c='lightgray', alpha=0.5, label='Data (Subsampled)')
 ax.plot(x_plot, y_plot_py, 'b-', lw=3, label='Python (smoothing_spline)', alpha=0.8)
 ax.plot(x_plot, y_plot_R, 'r--', lw=3, label='R (smooth.spline)', alpha=0.8)
-ax.set_xlabel("Hour")
-ax.set_ylabel("Number of Bikers")
-ax.set_title(f"Comparison of Smoothing Splines (df={df})")
+ax.set_xlabel("x")
+ax.set_ylabel("y")
+ax.set_title(f"Comparison of Smoothing Splines (df={df}) - BSpline Engine")
 ax.legend()
 plt.show()
 ```
 
 ## Performance Note
 
-While the C++ implementation offers significant speedups over the pure Python version, it is currently slower than R's `smooth.spline` for exact degrees of freedom calculation. This is because our current implementation of the EDF calculation involves $O(N^2)$ operations (specifically, $N$ back-solves to compute the trace of the inverse), whereas R likely uses a specialized $O(N)$ algorithm for computing the trace of a banded matrix inverse.
-
-For large $N$, the Hutchinson estimator (randomized trace estimation) is used to mitigate this cost, reducing the complexity to $O(k \cdot N)$ where $k$ is the number of random vectors (default 30).
-
-**Note:** We have recently implemented the exact $O(N)$ trace calculation using Takahashi's equations in the `engine='reinsch'` implementation, which matches R's performance for exact EDF.
-
-```{code-cell} ipython3
-
-```
-
-```{code-cell} ipython3
-
-```
+The `smoothing_spline` package implements efficient $O(N)$ trace calculation using Takahashi's equations (via `smoothing_spline.takahashi_trace`) for the `bspline` engine, matching the algorithmic complexity of R's `smooth.spline` for degrees of freedom calculation.

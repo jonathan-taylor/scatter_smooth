@@ -126,4 +126,58 @@ namespace utils {
         return x;
     }
 
+    Eigen::MatrixXd takahashi_upper(const Eigen::MatrixXd& U_banded) {
+        int w = (int)U_banded.rows() - 1;
+        int N = (int)U_banded.cols();
+        Eigen::MatrixXd Z = Eigen::MatrixXd::Zero(w + 1, N);
+
+        auto get = [&](const Eigen::MatrixXd& mat, int i, int j) {
+            if (j < i) std::swap(i, j);
+            if (j - i > w) return 0.0;
+            return mat(w - (j - i), j);
+        };
+
+        auto set_val = [&](Eigen::MatrixXd& mat, int i, int j, double val) {
+            if (j < i) std::swap(i, j);
+            if (j - i <= w) mat(w - (j - i), j) = val;
+        };
+
+        double u_nn = get(U_banded, N - 1, N - 1);
+        set_val(Z, N - 1, N - 1, 1.0 / (u_nn * u_nn));
+
+        for (int i = N - 2; i >= 0; --i) {
+            double u_ii = get(U_banded, i, i);
+            int j_max = std::min(i + w, N - 1);
+
+            for (int j = j_max; j > i; --j) {
+                double sum_val = 0.0;
+                for (int k = i + 1; k <= j_max; ++k) {
+                    sum_val += get(U_banded, i, k) * get(Z, k, j);
+                }
+                set_val(Z, i, j, -sum_val / u_ii);
+            }
+
+            double sum_diag = 0.0;
+            for (int k = i + 1; k <= j_max; ++k) {
+                sum_diag += get(U_banded, i, k) * get(Z, i, k);
+            }
+            set_val(Z, i, i, (1.0 / u_ii) * ((1.0 / u_ii) - sum_diag));
+        }
+        return Z;
+    }
+
+    double trace_product_banded(const Eigen::MatrixXd& Z_banded, const Eigen::MatrixXd& B_banded) {
+        int w = (int)Z_banded.rows() - 1;
+        int N = (int)Z_banded.cols();
+        double trace = 0.0;
+        for (int i = 0; i < N; ++i) {
+            trace += Z_banded(w, i) * B_banded(w, i);
+            int j_max = std::min(i + w, N - 1);
+            for (int j = i + 1; j <= j_max; ++j) {
+                trace += 2.0 * Z_banded(w - (j - i), j) * B_banded(w - (j - i), j);
+            }
+        }
+        return trace;
+    }
+
 }

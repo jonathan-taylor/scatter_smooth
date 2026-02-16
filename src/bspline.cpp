@@ -57,26 +57,29 @@ BSplineFitter::BSplineFitter(const Eigen::Ref<const Eigen::VectorXd>& x, const E
     for(int i=0; i<order; ++i) knots_[n_a - order + i] = i_k[n_i - 1];
     n_basis_ = (int)(n_a - order);
     weights_ = w_obj.is_none() ? Eigen::VectorXd::Ones(x.size()) : w_obj.cast<Eigen::VectorXd>();
-    int kd = order - 1; AB_template_ = Eigen::MatrixXd::Zero(kd + 1, n_basis_); compute_NTWN();
-    Omega_band_ = Eigen::MatrixXd::Zero(kd + 1, n_basis_); compute_penalty_matrix();
+    int kd = order - 1; AB_template_ = Eigen::MatrixXd::Zero(kd + 1, n_basis_); initialize_design();
+    Omega_band_ = Eigen::MatrixXd::Zero(kd + 1, n_basis_); initialize_penalty();
 }
 
-// ... (compute_NTWN, compute_penalty_matrix, eval_basis, get_knots, get_NTWN, get_Omega, compute_system, set_solution, fit unchanged except fit needs to be kept) ...
-
-void BSplineFitter::compute_NTWN() {
+void BSplineFitter::initialize_design() {
     Eigen::VectorXd b_v(order_); int s_i;
+    int kd = order_ - 1;
     for (int i = 0; i < x_.size(); ++i) {
         bspline::eval_bspline_basis(x_[i], order_, knots_, s_i, b_v, 0);
         for (int r = 0; r < order_; ++r) {
             int rg = s_i + r; if (rg >= n_basis_) continue;
-            for (int c = 0; c <= r; ++c) { int cg = s_i + c; AB_template_(rg - cg, cg) += weights_[i] * b_v[r] * b_v[c]; }
+            for (int c = 0; c <= r; ++c) { 
+                int cg = s_i + c; 
+                AB_template_(kd - (rg - cg), rg) += weights_[i] * b_v[r] * b_v[c]; 
+            }
         }
     }
 }
 
-void BSplineFitter::compute_penalty_matrix() {
+void BSplineFitter::initialize_penalty() {
     double pt = 1.0 / std::sqrt(3.0); double gp[2] = {-pt, pt}, gw[2] = {1.0, 1.0};
     int s_k = order_ - 1, e_k = (int)knots_.size() - order_; Eigen::VectorXd b_d(order_); int s_i;
+    int kd = order_ - 1;
     for (int k = s_k; k < e_k; ++k) {
         double t_s = knots_[k], t_e = knots_[k+1], dt = t_e - t_s; if (dt <= 1e-14) continue;
         for (int g = 0; g < 2; ++g) {
@@ -84,7 +87,10 @@ void BSplineFitter::compute_penalty_matrix() {
             double w_v = 0.5 * dt * gw[g];
             for (int r = 0; r < order_; ++r) {
                 int rg = s_i + r; if (rg >= n_basis_) continue;
-                for (int c = 0; c <= r; ++c) { int cg = s_i + c; Omega_band_(rg - cg, cg) += w_v * b_d[r] * b_d[c]; }
+                for (int c = 0; c <= r; ++c) { 
+                    int cg = s_i + c; 
+                    Omega_band_(kd - (rg - cg), rg) += w_v * b_d[r] * b_d[c]; 
+                }
             }
         }
     }
@@ -101,112 +107,180 @@ Eigen::VectorXd BSplineFitter::get_knots() { return knots_; }
 
 Eigen::MatrixXd BSplineFitter::get_NTWN() {
     Eigen::MatrixXd M = Eigen::MatrixXd::Zero(n_basis_, n_basis_); int kd = order_ - 1;
-    for (int j = 0; j < n_basis_; ++j) { for (int i = 0; i <= kd; ++i) { int row = j + i; if (row < n_basis_) { double v = AB_template_(i, j); M(row, j) = v; M(j, row) = v; } } }
+    for (int j = 0; j < n_basis_; ++j) { 
+        for (int i = 0; i <= kd; ++i) { 
+            int row = j - (kd - i);
+            if (row >= 0 && row <= j) {
+                double v = AB_template_(i, j);
+                M(row, j) = v;
+                M(j, row) = v; 
+            }
+        } 
+    }
     return M;
 }
 
 Eigen::MatrixXd BSplineFitter::get_Omega() {
     Eigen::MatrixXd M = Eigen::MatrixXd::Zero(n_basis_, n_basis_); int kd = order_ - 1;
-    for (int j = 0; j < n_basis_; ++j) { for (int i = 0; i <= kd; ++i) { int row = j + i; if (row < n_basis_) { double v = Omega_band_(i, j); M(row, j) = v; M(j, row) = v; } } }
+    for (int j = 0; j < n_basis_; ++j) { 
+        for (int i = 0; i <= kd; ++i) { 
+            int row = j - (kd - i);
+            if (row >= 0 && row <= j) {
+                double v = Omega_band_(i, j);
+                M(row, j) = v;
+                M(j, row) = v; 
+            }
+        } 
+    }
     return M;
 }
 
-std::pair<Eigen::MatrixXd, Eigen::VectorXd> BSplineFitter::compute_system(const Eigen::Ref<const Eigen::VectorXd>& y, double lamval) {
+void BSplineFitter::get_boundary_weights(double& ws1, double& ws2, double& we1, double& we2) {
+    int s_i;
+    Eigen::VectorXd d2_v(order_); 
+    
+    // Leading boundary (Start)
+    bspline::eval_bspline_basis(knots_[order_-1], order_, knots_, s_i, d2_v, 2);
+    double v0 = d2_v[0], v1 = d2_v[1], v2 = d2_v[2]; 
+    if (std::abs(v0) < 1e-12) throw std::runtime_error("Leading zero: v0=" + std::to_string(v0));
+    ws1 = -v1 / v0; 
+    ws2 = -v2 / v0;
+
+    // Trailing boundary (End)
+    bspline::eval_bspline_basis(knots_[knots_.size() - order_], order_, knots_, s_i, d2_v, 2);
+    int iN1 = n_basis_-1-s_i, iN2 = n_basis_-2-s_i, iN3 = n_basis_-3-s_i;
+    double u0 = d2_v[iN1], u1 = d2_v[iN2], u2 = d2_v[iN3]; 
+    if (std::abs(u0) < 1e-12) throw std::runtime_error("Trailing zero: u0=" + std::to_string(u0));
+    we1 = -u1 / u0; 
+    we2 = -u2 / u0;
+}
+
+void BSplineFitter::apply_constraints(Eigen::MatrixXd& M) {
+    double ws1, ws2, we1, we2;
+    get_boundary_weights(ws1, ws2, we1, we2);
+    
     int n = n_basis_, kd = order_ - 1;
-    Eigen::MatrixXd AB = AB_template_ + lamval * Omega_band_; Eigen::VectorXd b = Eigen::VectorXd::Zero(n), b_v(order_); int s_i;
+    
+    // Helper to access Upper Banded elements: M(kd - (col - row), col) for col >= row.
+    auto set_M = [&](int i, int j, double val) {
+        if (j < i) std::swap(i, j);
+        if (j - i <= kd) {
+            M(kd - (j - i), j) = val;
+        }
+    };
+    
+    auto get_M = [&](int i, int j) -> double { 
+        if (j < i) std::swap(i, j); 
+        if (j - i > kd) return 0.0; 
+        return M(kd - (j - i), j); 
+    };
+    
+    double a00 = get_M(0,0), a01 = get_M(1,0), a02 = get_M(2,0), a03 = get_M(3,0);
+    double a11 = get_M(1,1), a12 = get_M(2,1), a13 = get_M(3,1);
+    double a22 = get_M(2,2), a23 = get_M(3,2);
+    
+    // A[1, 1]
+    set_M(1, 1, a11 + 2*ws1*a01 + ws1*ws1*a00);
+    // A[1, 2]
+    set_M(1, 2, a12 + ws1*a02 + ws2*a01 + ws1*ws2*a00);
+    // A[2, 2]
+    set_M(2, 2, a22 + 2*ws2*a02 + ws2*ws2*a00);
+    
+    if (kd >= 3) { 
+        // A[1, 3] (Symmetric to A[3, 1])
+        set_M(1, 3, a13 + ws1*a03);
+        // A[2, 3] (Symmetric to A[3, 2])
+        set_M(2, 3, a23 + ws2*a03);
+    }
+
+    double an11 = get_M(n-1, n-1), an12 = get_M(n-1, n-2), an13 = get_M(n-1, n-3), an14 = get_M(n-1, n-4);
+    double an22 = get_M(n-2, n-2), an23 = get_M(n-2, n-3), an24 = get_M(n-2, n-4);
+    double an33 = get_M(n-3, n-3), an34 = get_M(n-3, n-4);
+    
+    // A[n-2, n-2]
+    set_M(n-2, n-2, an22 + 2*we1*an12 + we1*we1*an11);
+    // A[n-2, n-3]
+    set_M(n-2, n-3, an23 + we1*an13 + we2*an12 + we1*we2*an11);
+    // A[n-3, n-3]
+    set_M(n-3, n-3, an33 + 2*we2*an13 + we2*we2*an11);
+    
+    if (kd >= 3) { 
+        // A[n-2, n-4]
+        set_M(n-2, n-4, an24 + we1*an14);
+        // A[n-3, n-4]
+        set_M(n-3, n-4, an34 + we2*an14);
+    }
+}
+
+void BSplineFitter::apply_constraints(Eigen::VectorXd& v) {
+    double ws1, ws2, we1, we2;
+    get_boundary_weights(ws1, ws2, we1, we2);
+    int n = n_basis_;
+    v[1] += ws1 * v[0]; 
+    v[2] += ws2 * v[0];
+    v[n-2] += we1 * v[n-1]; 
+    v[n-3] += we2 * v[n-1];
+}
+
+Eigen::MatrixXd BSplineFitter::compute_design() {
+    Eigen::MatrixXd NTWN = AB_template_;
+    apply_constraints(NTWN);
+    return NTWN;
+}
+
+Eigen::MatrixXd BSplineFitter::compute_penalty() {
+    Eigen::MatrixXd Omega = Omega_band_;
+    apply_constraints(Omega);
+    return Omega;
+}
+
+Eigen::VectorXd BSplineFitter::compute_rhs(const Eigen::Ref<const Eigen::VectorXd>& y) {
+    int n = n_basis_;
+    Eigen::VectorXd b = Eigen::VectorXd::Zero(n), b_v(order_); 
+    int s_i;
     for(int i=0; i<x_.size(); ++i) {
         bspline::eval_bspline_basis(x_[i], order_, knots_, s_i, b_v, 0);
         for(int j=0; j<order_; ++j) { int idx = s_i + j; if(idx < n) b[idx] += weights_[i] * y[i] * b_v[j]; }
     }
-    
-    // Natural spline boundary conditions logic
-    auto get_A = [&](int i, int j) -> double { if (i < j) std::swap(i, j); if (i - j > kd) return 0.0; return AB(i-j, j); };
-    Eigen::VectorXd d2_v(order_); bspline::eval_bspline_basis(knots_[order_-1], order_, knots_, s_i, d2_v, 2);
-    double v0 = d2_v[0], v1 = d2_v[1], v2 = d2_v[2]; if (std::abs(v0) < 1e-12) throw std::runtime_error("Leading zero: v0=" + std::to_string(v0));
-    double ws1 = -v1 / v0, ws2 = -v2 / v0, a00 = get_A(0,0), a01 = get_A(1,0), a02 = get_A(2,0), a03 = get_A(3,0), a11 = get_A(1,1), a12 = get_A(2,1), a13 = get_A(3,1), a22 = get_A(2,2), a23 = get_A(3,2);
-    
-    AB(0, 1) = a11 + 2*ws1*a01 + ws1*ws1*a00; AB(1, 1) = a12 + ws1*a02 + ws2*a01 + ws1*ws2*a00; AB(0, 2) = a22 + 2*ws2*a02 + ws2*ws2*a00;
-    if (kd >= 3) { AB(2, 1) = a13 + ws1*a03; AB(1, 2) = a23 + ws2*a03; }
-    b[1] += ws1 * b[0]; b[2] += ws2 * b[0];
-    bspline::eval_bspline_basis(knots_[knots_.size() - order_], order_, knots_, s_i, d2_v, 2);
-    int iN1 = n-1-s_i, iN2 = n-2-s_i, iN3 = n-3-s_i;
-    double u0 = d2_v[iN1], u1 = d2_v[iN2], u2 = d2_v[iN3]; if (std::abs(u0) < 1e-12) throw std::runtime_error("Trailing zero: u0=" + std::to_string(u0));
-    double we1 = -u1 / u0, we2 = -u2 / u0, an11 = get_A(n-1, n-1), an12 = get_A(n-1, n-2), an13 = get_A(n-1, n-3), an14 = get_A(n-1, n-4), an22 = get_A(n-2, n-2), an23 = get_A(n-2, n-3), an24 = get_A(n-2, n-4), an33 = get_A(n-3, n-3), an34 = get_A(n-3, n-4);
-    
-    AB(0, n-2) = an22 + 2*we1*an12 + we1*we1*an11; AB(1, n-3) = an23 + we1*an13 + we2*an12 + we1*we2*an11; AB(0, n-3) = an33 + 2*we2*an13 + we2*we2*an11;
-    if (kd >= 3) { AB(2, n-4) = an24 + we1*an14; AB(1, n-4) = an34 + we2*an14; }
-    b[n-2] += we1 * b[n-1]; b[n-3] += we2 * b[n-1];
-
-    return {AB, b};
+    apply_constraints(b);
+    return b;
 }
 
 void BSplineFitter::set_solution(const Eigen::Ref<const Eigen::VectorXd>& sol) {
-    int n = n_basis_, s_i;
+    int n = n_basis_;
     if (sol.size() != n - 2) throw std::runtime_error("Solution size mismatch. Expected " + std::to_string(n-2) + ", got " + std::to_string(sol.size()));
     
     coeffs_ = Eigen::VectorXd::Zero(n);
     coeffs_.segment(1, n - 2) = sol;
 
-    Eigen::VectorXd d2_v(order_); 
-    bspline::eval_bspline_basis(knots_[order_-1], order_, knots_, s_i, d2_v, 2);
-    double v0 = d2_v[0], v1 = d2_v[1], v2 = d2_v[2];
-    double ws1 = -v1 / v0, ws2 = -v2 / v0;
-
-    bspline::eval_bspline_basis(knots_[knots_.size() - order_], order_, knots_, s_i, d2_v, 2);
-    int iN1 = n-1-s_i, iN2 = n-2-s_i, iN3 = n-3-s_i;
-    double u0 = d2_v[iN1], u1 = d2_v[iN2], u2 = d2_v[iN3];
-    double we1 = -u1 / u0, we2 = -u2 / u0;
+    double ws1, ws2, we1, we2;
+    get_boundary_weights(ws1, ws2, we1, we2);
 
     coeffs_[0] = ws1 * coeffs_[1] + ws2 * coeffs_[2]; 
     coeffs_[n-1] = we1 * coeffs_[n-2] + we2 * coeffs_[n-3];
 }
 
 Eigen::VectorXd BSplineFitter::fit(const Eigen::Ref<const Eigen::VectorXd>& y, double lamval) {
-    auto system = compute_system(y, lamval);
-    Eigen::MatrixXd AB = system.first; // This is banded (n, kd+1)
-    Eigen::VectorXd b = system.second;
+    Eigen::MatrixXd NTWN = compute_design();
+    Eigen::MatrixXd Omega = compute_penalty();
+    Eigen::VectorXd b = compute_rhs(y);
+    Eigen::MatrixXd AB = NTWN + lamval * Omega;
+    
     int n = n_basis_, kd = order_ - 1;
-    
-    // We need to solve Ax = b where A is represented by AB (lower banded)
-    // We can reuse the banded_to_sparse helper if we modify it to handle the specific AB structure
-    // AB has n rows (but really only n-2 cols/rows are active for the solve)
-    // Wait, compute_system returns AB for the full system?
-    // In compute_system:
-    // AB(0, n-2) ...
-    // The system is size n.
-    // But we are solving for a reduced system or applying constraints?
-    // compute_system applies the boundary constraints to AB and b directly?
-    // No, look at compute_system:
-    // It updates AB entries corresponding to boundary constraints.
-    // But it returns the FULL matrix AB (size kd+1 x n).
-    // And b (size n).
-    // The previous dpbsv call solved a subsystem of size n-2 starting at index 1.
-    // dpbsv_(&u_c, &n_r, &kd, &nrhs, AB.data() + ldab * 1, &ldab, b.data() + 1, &n, &info);
-    // n_r = n - 2. pointer shift AB.data() + ldab * 1 (column 1). b.data() + 1 (element 1).
-    
-    // So we need to solve the subsystem A[1:n-1, 1:n-1] * x[1:n-1] = b[1:n-1].
-    // Let's extract this subsystem to sparse.
-    
     int n_r = n - 2;
     std::vector<Eigen::Triplet<double>> triplets;
     triplets.reserve(n_r * (kd + 1) * 2);
     
-    // Iterate over columns j from 1 to n-2 (indices 0 to n_r-1 in the new system)
-    for (int j = 0; j < n_r; ++j) {
-        int original_col = j + 1;
-        for (int i = 0; i <= kd; ++i) {
-            // Check if element exists in the band
-            // AB stores lower band. AB(i, col) is element at (col+i, col)
-            // We want elements where both row and col are in range [1, n-2].
-            int original_row = original_col + i;
-            
-            if (original_row <= n - 2) {
-                double val = AB(i, original_col);
-                if (std::abs(val) > 1e-14) {
-                    triplets.push_back({original_row - 1, original_col - 1, val});
-                    if (original_row != original_col) {
-                        triplets.push_back({original_col - 1, original_row - 1, val});
-                    }
+    for (int j = 1; j < n-1; ++j) {
+        int col_sub = j - 1;
+        int row_start = std::max(1, j - kd);
+        for (int i = row_start; i <= j; ++i) {
+            int row_sub = i - 1;
+            double val = AB(kd - (j - i), j);
+            if (std::abs(val) > 1e-14) {
+                triplets.push_back({row_sub, col_sub, val});
+                if (row_sub != col_sub) {
+                    triplets.push_back({col_sub, row_sub, val});
                 }
             }
         }
@@ -220,8 +294,6 @@ Eigen::VectorXd BSplineFitter::fit(const Eigen::Ref<const Eigen::VectorXd>& y, d
     Eigen::SimplicialLLT<Eigen::SparseMatrix<double>> solver;
     solver.compute(A_sparse);
     if(solver.info() != Eigen::Success) {
-        // Fallback or error?
-        // For now, return zero coefficients or throw
         throw std::runtime_error("Decomposition failed in BSplineFitter::fit");
     }
     
@@ -235,14 +307,12 @@ namespace {
         std::vector<Eigen::Triplet<double>> triplets;
         triplets.reserve(n * (kd + 1) * 2);
         for (int j = 0; j < n; ++j) {
-            for (int i = 0; i <= kd; ++i) {
-                int row = j + i;
-                if (row < n) {
-                    double val = band_mat(i, j);
-                    if (std::abs(val) > 1e-14) {
-                        triplets.push_back({row, j, val});
-                        if (row != j) triplets.push_back({j, row, val});
-                    }
+            int row_start = std::max(0, j - kd);
+            for (int i = row_start; i <= j; ++i) {
+                double val = band_mat(kd - (j - i), j);
+                if (std::abs(val) > 1e-14) {
+                    triplets.push_back({i, j, val});
+                    if (i != j) triplets.push_back({j, i, val});
                 }
             }
         }
@@ -258,16 +328,8 @@ double BSplineFitter::compute_df(double lamval) {
     Eigen::SparseMatrix<double> NTWN_sparse = banded_to_sparse(AB_template_, n, kd);
     Eigen::SparseMatrix<double> Omega_sparse = banded_to_sparse(Omega_band_, n, kd);
     
-    int s_i;
-    Eigen::VectorXd d2_v(order_); 
-    bspline::eval_bspline_basis(knots_[order_-1], order_, knots_, s_i, d2_v, 2);
-    double v0 = d2_v[0], v1 = d2_v[1], v2 = d2_v[2];
-    double ws1 = -v1 / v0, ws2 = -v2 / v0;
-
-    bspline::eval_bspline_basis(knots_[knots_.size() - order_], order_, knots_, s_i, d2_v, 2);
-    int iN1 = n-1-s_i, iN2 = n-2-s_i, iN3 = n-3-s_i;
-    double u0 = d2_v[iN1], u1 = d2_v[iN2], u2 = d2_v[iN3];
-    double we1 = -u1 / u0, we2 = -u2 / u0;
+    double ws1, ws2, we1, we2;
+    get_boundary_weights(ws1, ws2, we1, we2);
     
     std::vector<Eigen::Triplet<double>> p_triplets;
     p_triplets.reserve((n-2) + 4);

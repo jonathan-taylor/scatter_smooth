@@ -1,13 +1,16 @@
 from dataclasses import dataclass, field
 import numpy as np
-from scipy.linalg import solveh_banded
+from scipy.linalg import (cholesky_banded,
+                          cho_solve_banded,
+                          solveh_banded)
+from scipy.optimize import brentq
 
 from ._spline_extension import (
     NaturalSplineFitter, 
     ReinschFitter, 
     BSplineFitter
 )
-        
+from .takahashi_trace import trace_ratio_banded
 
 @dataclass
 class SplineFitter:
@@ -148,32 +151,65 @@ class SplineFitter:
         else:
             raise ValueError(f"Unknown engine: {self.engine}")
 
+    def compute_df(self, lamval=None):
+        """
+        Compute the degrees of freedom for a given lambda.
+        """
+        if lamval is None:
+            lamval = self.lamval
+        
+        lam_scaled = lamval / (self.x_scale_ ** 3)
+        
+        if self.engine == 'bspline':
+            NTWN = self._cpp_fitter.compute_design()
+            Omega = self._cpp_fitter.compute_penalty()
+            n = NTWN.shape[1]
+            NTWN_sub = NTWN[:, 1:n-1]
+            Omega_sub = Omega[:, 1:n-1]
+            
+            # Matrices are already in Upper Banded format
+            
+            # DF = Tr((NTWN + lam*Omega)^-1 * NTWN)
+            # trace_ratio_banded(A, B) = Tr((A+B)^-1 * B)
+            # So A = lam*Omega, B = NTWN
+            trace, self._cholesky = trace_ratio_banded(lam_scaled * Omega_sub, NTWN_sub)
+            return trace
+        else:
+            return self._cpp_fitter.compute_df(lam_scaled)
+
     def _find_lamval_for_df(self, target_df, log10_lam_bounds=(-20, 20)):
         """
-        Finds the exact lambda value that yields the target degrees of freedom
-        using the C++ implementation.
+        Finds the exact lambda value that yields the target degrees of freedom.
         """
-        # Bounds check logic remains similar
-        max_df = self.n_k_ if self.engine != 'bspline' else (self.n_k_ + self.order - 2) # Approximation for bspline basis size
+        # Bounds check logic
+        max_df = self.n_k_ if self.engine != 'bspline' else (self.n_k_ + self.order - 2)
         if target_df >= max_df - 0.01:
-             # Just return a very small lambda
              return 1e-15 * (self.x_scale_ ** 3)
         if target_df <= 2.01:
-             # Just return a very large lambda
              return 1e15 * (self.x_scale_ ** 3)
 
-        if hasattr(self._cpp_fitter, "solve_for_df"):
-             # Adjust bounds for C++ which works on scaled lambda
-             shift = 3 * np.log10(self.x_scale_)
-             min_log = log10_lam_bounds[0] - shift
-             max_log = log10_lam_bounds[1] - shift
-             
+        shift = 3 * np.log10(self.x_scale_)
+        min_log = log10_lam_bounds[0] - shift
+        max_log = log10_lam_bounds[1] - shift
+
+        if self.engine == 'bspline':
+            # Use Python root finding with Takahashi DF
+            def objective(log_lam):
+                return self.compute_df(10**log_lam) - target_df
+            
+            try:
+                log_lam_opt = brentq(objective, min_log + shift, max_log + shift)
+                return 10**log_lam_opt
+            except ValueError:
+                # Fallback or wider search?
+                return self._cpp_fitter.solve_for_df(target_df, min_log, max_log) * (self.x_scale_ ** 3)
+        else:
              try:
                  lam_scaled = self._cpp_fitter.solve_for_df(target_df, min_log, max_log)
                  return lam_scaled * (self.x_scale_ ** 3)
              except RuntimeError as e:
                  raise RuntimeError(f"C++ solver failed: {e}")
-        
+
     def solve_gcv(self, y, sample_weight=None, log10_lam_bounds=(-20, 20)):
         """
         Find optimal lambda using GCV and fit the model using C++.
@@ -237,18 +273,23 @@ class SplineFitter:
              self._cpp_fitter.fit(y_eff, lam_scaled)
         else:
              if self.engine == 'bspline':
-                 AB, b = self._cpp_fitter.compute_system(y_arr, lam_scaled)
-                 # AB is (kd+1, n) in lower banded format.
+                 NTWN = self._cpp_fitter.compute_design()
+                 Omega = self._cpp_fitter.compute_penalty()
+                 b = self._cpp_fitter.compute_rhs(y_arr)
+                 AB = NTWN + lam_scaled * Omega
+                 # AB is (kd+1, n) in UPPER banded format.
                  # The system to solve is for indices 1 to n-2.
                  # solveh_banded expects (l+1, M).
-                 # We pass the columns 1 to n-2 (inclusive, so 1:n-1 in python slice).
-                 # b is also sliced.
                  n = b.shape[0]
                  # slice columns
                  ab_sub = AB[:, 1:n-1]
                  b_sub = b[1:n-1]
                  
-                 sol = solveh_banded(ab_sub, b_sub, lower=True)
+                 if not hasattr(self, "_cholesky"):
+                     self.compute_df()
+                 sol1 = cho_solve_banded((self._cholesky, False), b_sub)
+                 sol = solveh_banded(ab_sub, b_sub)
+                 print(np.linalg.norm(sol1 - sol)/np.linalg.norm(sol))
                  self._cpp_fitter.set_solution(sol)
              else:
                  self._cpp_fitter.fit(y_arr, lam_scaled)
