@@ -22,10 +22,9 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest",
-    "rpy2",
     "scipy",
-    "matplotlib",
-    "pandas"
+    "ninja",
+    "meson"
 ]
 doc = [
     "myst-parser",
