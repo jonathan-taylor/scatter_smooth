@@ -123,6 +123,9 @@ t_py = %timeit -o -n 10 -r 3 SplineSmoother(x=hr_numeric, df=10).smooth(bikers)
 
 ```{code-cell} ipython3
 %%R -i hr_numeric -i bikers
+if (!require("microbenchmark", quietly = TRUE)) {
+    install.packages("microbenchmark", repos="http://cloud.r-project.org")
+}
 library(microbenchmark)
 # R Timing
 microbenchmark(
