@@ -24,7 +24,8 @@ dev = [
     "pytest",
     "rpy2",
     "scipy",
-    "matplotlib"
+    "matplotlib",
+    "pandas"
 ]
 doc = [
     "myst-parser",
