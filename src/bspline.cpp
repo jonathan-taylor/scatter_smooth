@@ -3,18 +3,10 @@
 #include <iostream>
 #include <cmath>
 #include <algorithm>
+#include <Eigen/Sparse>
 
 namespace bspline {
-    /**
-     * Evaluates B-spline basis functions and their derivatives using the Cox-de Boor recursion.
-     * 
-     * @param x The evaluation point.
-     * @param k The order of the B-spline (degree + 1).
-     * @param knots The knot vector.
-     * @param span_index Output parameter for the knot span index.
-     * @param N Output vector containing the non-zero basis function values.
-     * @param deriv The order of derivative to compute (0, 1, or 2).
-     */
+    // ... (eval_bspline_basis implementation unchanged) ...
     void eval_bspline_basis(double x, int k, const Eigen::VectorXd& knots, int& span_index, Eigen::VectorXd& N, int deriv) {
         int n_k = (int)knots.size();
         double d_min = knots[k-1], d_max = knots[n_k-k];
@@ -69,12 +61,8 @@ BSplineFitter::BSplineFitter(const Eigen::Ref<const Eigen::VectorXd>& x, const E
     Omega_band_ = Eigen::MatrixXd::Zero(kd + 1, n_basis_); compute_penalty_matrix();
 }
 
-/**
- * Computes the matrix N^T W N, where N is the B-spline basis matrix.
- * 
- * Since B-splines have compact support, this matrix is banded.
- * This implementation iterates over data points and updates the relevant band elements.
- */
+// ... (compute_NTWN, compute_penalty_matrix, eval_basis, get_knots, get_NTWN, get_Omega, compute_system, set_solution, fit unchanged except fit needs to be kept) ...
+
 void BSplineFitter::compute_NTWN() {
     Eigen::VectorXd b_v(order_); int s_i;
     for (int i = 0; i < x_.size(); ++i) {
@@ -86,21 +74,6 @@ void BSplineFitter::compute_NTWN() {
     }
 }
 
-/**
- * Computes the penalty matrix Omega using a quadrature rule.
- * 
- * Omega_ij = Integral phi''_i(x) * phi''_j(x) dx
- * 
- * This function calculates the inner product of the second derivatives of the B-spline basis functions.
- * It iterates over the knot intervals and uses a 2-point Gaussian quadrature rule to approximate the integral.
- * 
- * The quadrature points and weights are hardcoded for efficiency:
- *   - pt: 1/sqrt(3)
- *   - gp: {-pt, pt} (Gaussian points)
- *   - gw: {1.0, 1.0} (Gaussian weights)
- * 
- * The resulting matrix is stored in a banded format (Omega_band_) suitable for efficient solving.
- */
 void BSplineFitter::compute_penalty_matrix() {
     double pt = 1.0 / std::sqrt(3.0); double gp[2] = {-pt, pt}, gw[2] = {1.0, 1.0};
     int s_k = order_ - 1, e_k = (int)knots_.size() - order_; Eigen::VectorXd b_d(order_); int s_i;
@@ -138,15 +111,6 @@ Eigen::MatrixXd BSplineFitter::get_Omega() {
     return M;
 }
 
-/**
- * Constructs the linear system for the B-spline model.
- * 
- * The problem is: min ||y - N*alpha||^2 + lambda * alpha^T * Omega * alpha
- * Normal equations: (N^T W N + lambda * Omega) * alpha = N^T W y
- * 
- * Returns the banded matrix AB and the RHS vector b, after applying natural boundary conditions.
- * The matrix AB is in lower banded storage format (row i stores the i-th subdiagonal).
- */
 std::pair<Eigen::MatrixXd, Eigen::VectorXd> BSplineFitter::compute_system(const Eigen::Ref<const Eigen::VectorXd>& y, double lamval) {
     int n = n_basis_, kd = order_ - 1;
     Eigen::MatrixXd AB = AB_template_ + lamval * Omega_band_; Eigen::VectorXd b = Eigen::VectorXd::Zero(n), b_v(order_); int s_i;
@@ -183,8 +147,6 @@ void BSplineFitter::set_solution(const Eigen::Ref<const Eigen::VectorXd>& sol) {
     coeffs_ = Eigen::VectorXd::Zero(n);
     coeffs_.segment(1, n - 2) = sol;
 
-    // Recompute ws1, ws2, we1, we2 to reconstruct boundaries
-    // This duplicates some logic but avoids storing state across calls
     Eigen::VectorXd d2_v(order_); 
     bspline::eval_bspline_basis(knots_[order_-1], order_, knots_, s_i, d2_v, 2);
     double v0 = d2_v[0], v1 = d2_v[1], v2 = d2_v[2];
@@ -220,36 +182,32 @@ Eigen::VectorXd BSplineFitter::fit(const Eigen::Ref<const Eigen::VectorXd>& y, d
 }
 
 namespace {
-    Eigen::MatrixXd banded_to_dense(const Eigen::MatrixXd& band_mat, int n, int kd) {
-        Eigen::MatrixXd dense = Eigen::MatrixXd::Zero(n, n);
+    Eigen::SparseMatrix<double> banded_to_sparse(const Eigen::MatrixXd& band_mat, int n, int kd) {
+        std::vector<Eigen::Triplet<double>> triplets;
+        triplets.reserve(n * (kd + 1) * 2);
         for (int j = 0; j < n; ++j) {
             for (int i = 0; i <= kd; ++i) {
                 int row = j + i;
                 if (row < n) {
                     double val = band_mat(i, j);
-                    dense(row, j) = val;
-                    dense(j, row) = val;
+                    if (std::abs(val) > 1e-14) {
+                        triplets.push_back({row, j, val});
+                        if (row != j) triplets.push_back({j, row, val});
+                    }
                 }
             }
         }
-        return dense;
+        Eigen::SparseMatrix<double> sparse_mat(n, n);
+        sparse_mat.setFromTriplets(triplets.begin(), triplets.end());
+        return sparse_mat;
     }
 }
 
 double BSplineFitter::compute_df(double lamval) {
     int n = n_basis_, kd = order_ - 1;
     
-    // We need to form the reduced system matrix A_red (n-2 x n-2)
-    // and M_red (n-2 x n-2) which is NTWN reduced
-    // Trace(S) = Trace( (NTWN + lam*Omega)^-1 * NTWN )
-    
-    // Expand NTWN and Omega to full dense matrices
-    Eigen::MatrixXd NTWN_dense = banded_to_dense(AB_template_, n, kd);
-    Eigen::MatrixXd Omega_dense = banded_to_dense(Omega_band_, n, kd);
-    
-    // Apply boundary constraints to reduce to (n-2) x (n-2)
-    // Constraints: c0 = ws1*c1 + ws2*c2, c(n-1) = we1*c(n-2) + we2*c(n-3)
-    // We can construct a projection matrix P (n x n-2) such that c = P * c_reduced
+    Eigen::SparseMatrix<double> NTWN_sparse = banded_to_sparse(AB_template_, n, kd);
+    Eigen::SparseMatrix<double> Omega_sparse = banded_to_sparse(Omega_band_, n, kd);
     
     int s_i;
     Eigen::VectorXd d2_v(order_); 
@@ -262,63 +220,52 @@ double BSplineFitter::compute_df(double lamval) {
     double u0 = d2_v[iN1], u1 = d2_v[iN2], u2 = d2_v[iN3];
     double we1 = -u1 / u0, we2 = -u2 / u0;
     
-    Eigen::MatrixXd P = Eigen::MatrixXd::Zero(n, n - 2);
-    P(0, 0) = ws1; P(0, 1) = ws2;
-    P(n-1, n-3) = we1; P(n-1, n-4) = we2; // Be careful with indices here
-    // Correct logic: c_reduced = [c1, c2, ..., c(n-2)]
-    // c0 = ws1*c1 + ws2*c2
-    // c1 = c1
-    // ...
-    // c(n-2) = c(n-2)
-    // c(n-1) = we1*c(n-2) + we2*c(n-3)
+    std::vector<Eigen::Triplet<double>> p_triplets;
+    p_triplets.reserve((n-2) + 4);
+    p_triplets.push_back({0, 0, ws1});
+    p_triplets.push_back({0, 1, ws2});
+    p_triplets.push_back({n-1, n-3, we1});
+    p_triplets.push_back({n-1, n-4, we2});
+    for(int i=0; i < n-2; ++i) {
+        p_triplets.push_back({i+1, i, 1.0});
+    }
     
-    // Indices in c_reduced (0-based) map to indices in c (1-based, shifted by +1)
-    // c_reduced[0] -> c[1]
-    // c_reduced[1] -> c[2]
+    Eigen::SparseMatrix<double> P(n, n-2);
+    P.setFromTriplets(p_triplets.begin(), p_triplets.end());
     
-    // Middle block is identity
-    P.block(1, 0, n - 2, n - 2) = Eigen::MatrixXd::Identity(n - 2, n - 2);
+    Eigen::SparseMatrix<double> A = P.transpose() * NTWN_sparse * P;
+    Eigen::SparseMatrix<double> B = P.transpose() * Omega_sparse * P;
     
-    // Fix boundary rows in P
-    // Row 0 of P corresponds to c0
-    // c0 = ws1 * c_red[0] + ws2 * c_red[1]
-    P(0, 0) = ws1; P(0, 1) = ws2;
+    Eigen::SparseMatrix<double> LHS = A + lamval * B;
     
-    // Row n-1 of P corresponds to c(n-1)
-    // c(n-1) = we1 * c_red[n-3] + we2 * c_red[n-4]
-    // Indices of c_red go from 0 to n-3 (size n-2)
-    // c_red[n-3] corresponds to c[n-2]
-    // c_red[n-4] corresponds to c[n-3]
-    P(n-1, n-3) = we1;
-    P(n-1, n-4) = we2;
-    
-    // Reduced matrices
-    Eigen::MatrixXd A = P.transpose() * NTWN_dense * P;
-    Eigen::MatrixXd B = P.transpose() * Omega_dense * P;
-    
-    Eigen::MatrixXd LHS = A + lamval * B;
-    Eigen::LLT<Eigen::MatrixXd> solver;
+    Eigen::SimplicialLLT<Eigen::SparseMatrix<double>> solver;
     solver.compute(LHS);
-    if (solver.info() != Eigen::Success) return 0.0;
+    if(solver.info() != Eigen::Success) return 0.0;
     
-    Eigen::MatrixXd Sol = solver.solve(A);
-    return Sol.trace();
+    double trace = 0.0;
+    Eigen::VectorXd rhs = Eigen::VectorXd::Zero(n-2);
+    Eigen::VectorXd sol;
+    
+    for (int j = 0; j < n-2; ++j) {
+        rhs.setZero();
+        for (Eigen::SparseMatrix<double>::InnerIterator it(A, j); it; ++it) {
+            rhs[it.row()] = it.value();
+        }
+        
+        sol = solver.solve(rhs);
+        trace += sol[j];
+    }
+    
+    return trace;
 }
 
 double BSplineFitter::gcv_score(double lamval, const Eigen::Ref<const Eigen::VectorXd>& y) {
-    // Need fitted values f
-    fit(y, lamval); // Populates coeffs_
-    
-    // Compute f = N * coeffs_
-    // Since we don't have N stored as a matrix, we compute f via predict on x
+    fit(y, lamval);
     Eigen::VectorXd f = predict(x_, 0);
-    
-    // RSS weighted
     double rss = 0.0;
     for(int i=0; i<x_.size(); ++i) {
         rss += weights_[i] * std::pow(y[i] - f[i], 2);
     }
-    
     double df = compute_df(lamval);
     double n = (double)y.size();
     double denom = 1.0 - df / n;
