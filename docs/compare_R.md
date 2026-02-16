@@ -1,6 +1,6 @@
 ---
 jupytext:
-  formats: md:myst,ipynb
+  formats: md:myst
   text_representation:
     extension: .md
     format_name: myst
@@ -266,19 +266,21 @@ To make a fair speed comparison, we can limit the number of knots in Python as w
 
 ```{code-cell} ipython3
 # Python Timing with reduced knots
-df = 30
+df = 20
 n_syn = 10000
 x_syn = np.sort(rng.uniform(0, 10, n_syn))
 y_syn = np.sin(np.sqrt(x_syn)*2) + rng.normal(0, 1, n_syn)
-n_knots_reduced = 200 # Similar to R's behavior
-print(f"Python Timing (n={n_syn}, n_knots={n_knots_reduced}):")
+n_knots_reduced = 500 # Similar to R's behavior
 
 # Fit for plotting
 spline = SplineFitter(x=x_syn, df=df, n_knots=n_knots_reduced)
 spline.fit(y_syn)
 y_plot_py = spline.predict(x_plot)
+```
 
-%timeit SplineFitter(x=x_syn, df=df, n_knots=n_knots_reduced).fit(y_syn)
+```{code-cell} ipython3
+%%timeit 
+SplineFitter(x=x_syn, df=df, n_knots=n_knots_reduced).fit(y_syn)
 ```
 
 ```{code-cell} ipython3
@@ -315,4 +317,4 @@ plt.show()
 
 ## Performance Note
 
-The `smoothing_spline` package implements efficient $O(N)$ trace calculation using Takahashi's equations (via `smoothing_spline.takahashi_trace`) for the `bspline` engine, matching the algorithmic complexity of R's `smooth.spline` for degrees of freedom calculation.
+The `smoothing_spline` package implements efficient $O(N)$ trace calculation using Takahashi's equations for the `bspline` engine, matching the algorithmic complexity of R's `smooth.spline` for degrees of freedom calculation, which is the costliest part as it involves a Cholesky factorization for each candidate `lamval`.

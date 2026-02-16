@@ -1,3 +1,15 @@
+---
+jupytext:
+  main_language: python
+  cell_metadata_filter: -all
+  formats: md:myst
+  text_representation:
+    extension: .md
+    format_name: myst
+    format_version: 0.13
+    jupytext_version: 1.19.1
+---
+
 # Smoothing Spline Documentation
 
 This repository provides a minimal and efficient implementation of a smoothing spline, similar to `smooth.spline` in R.
@@ -8,4 +20,3 @@ It is implemented in C++ with python bindings provided by `pybind11`, offering m
 *   **B-Spline Basis**: Efficient banded solver implementation using LAPACK.
 
 See the table of contents for more details on the theory and comparisons with other implementations.
-
