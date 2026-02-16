@@ -110,13 +110,12 @@ ax.set_yscale('log')
 ### 2. Fixed Number of Knots (K=200)
 
 In practice, for large $N$, we often limit the number of knots to a fixed $K \ll N$.
-`engine='reinsch'` is not available here (requires K=N). We compare `natural`, `bspline` and `auto`.
+`engine='reinsch'` is not available here (requires K=N). We demonstrate time required for `bspline` as $n$ increases.
 
 ```{code-cell} ipython3
 ns_large = [100, 500, 1000, 1500, 2000, 5000, 10000, 20000, 30000, 50000]
 K = 200
 print(f"Benchmarking with large N and K={K}...")
-results_fixed_natural = benchmark_fitters(ns_large, n_knots=K, engine='natural', python=False)['cpp']
 results_fixed_bspline = benchmark_fitters(ns_large, n_knots=K, engine='bspline', python=False)['cpp']
 ```
 
