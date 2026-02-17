@@ -3,14 +3,22 @@
 #include "natural_spline.h"
 #include "reinsch.h"
 #include "bspline.h"
+#include "loess.h"
 #include "utils.h"
 
 namespace py = pybind11;
 
-PYBIND11_MODULE(_spline_extension, m) {
+PYBIND11_MODULE(_scatter_smooth_extension, m) {
     m.def("trace_takahashi", &utils::trace_takahashi, py::arg("U_banded"), py::arg("B_banded"));
     m.def("takahashi_upper", &utils::takahashi_upper, py::arg("U_banded"));
     m.def("trace_product_banded", &utils::trace_product_banded, py::arg("Z_banded"), py::arg("B_banded"));
+
+    py::class_<LoessSmootherCpp>(m, "LoessSmootherCpp")
+        .def(py::init<const Eigen::Ref<const Eigen::VectorXd>&, py::object, double, int>(),
+             py::arg("x"), py::arg("weights_obj") = py::none(), py::arg("span") = 0.75, py::arg("degree") = 1)
+        .def("fit", &LoessSmootherCpp::fit)
+        .def("update_weights", &LoessSmootherCpp::update_weights)
+        .def("predict", &LoessSmootherCpp::predict, py::arg("x_new"), py::arg("deriv") = 0);
 
     py::class_<NaturalSplineSmoother>(m, "NaturalSplineSmoother")
         .def(py::init<const Eigen::Ref<const Eigen::VectorXd>&, const Eigen::Ref<const Eigen::VectorXd>&, py::object>(),

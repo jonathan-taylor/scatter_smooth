@@ -1,12 +1,30 @@
+"""
+Tests for the Takahashi algorithm for trace computation.
+
+This module contains tests for the Takahashi algorithm, which is a fast
+method for computing the trace of the product of the inverse of a banded
+matrix and another banded matrix. This is particularly useful for calculating
+the effective degrees of freedom in a smoothing spline.
+"""
 import numpy as np
 import pytest
 from scipy.linalg import cholesky_banded, inv
 from .takahashi_trace import (takahashi_upper,
                               trace_product_banded)
-from scatter_smooth._spline_extension import trace_takahashi as trace_takahashi_cpp
+from scatter_smooth._scatter_smooth_extension import trace_takahashi as trace_takahashi_cpp
 
 def band_to_dense(ab, w, N):
-    """Helper to expand banded storage to dense matrix for verification."""
+    """
+    Helper to expand banded storage to a dense matrix for verification.
+
+    Args:
+        ab (np.ndarray): The banded matrix in scipy's upper-banded format.
+        w (int): The number of super-diagonals (bandwidth).
+        N (int): The size of the matrix.
+
+    Returns:
+        np.ndarray: The full dense matrix.
+    """
     d = np.zeros((N, N))
     for i in range(N):
         for j in range(max(0, i-w), min(N, i+w+1)):
@@ -19,8 +37,18 @@ def band_to_dense(ab, w, N):
 
 def test_takahashi_trace():
     """
-    Verification Script:
-    Compares Fast Banded method vs. Slow Dense method
+    Verify the fast banded Takahashi method against a slow dense method.
+
+    This test performs the following steps:
+    1.  Generates two random symmetric positive-definite banded matrices, A and B.
+    2.  Computes `trace((A+B)^-1 @ B)` using a fast method:
+        a.  Computes C = A + B in banded form.
+        b.  Performs a banded Cholesky decomposition of C.
+        c.  Uses the Takahashi algorithm to find the bands of C^-1.
+        d.  Computes the trace of the product of the two banded matrices.
+    3.  Computes the same trace using a slow, dense matrix approach for reference.
+    4.  Compares the results from the fast Python, fast C++, and slow dense
+        methods, asserting that they are all-close.
     """
     # 1. Setup Parameters
     N = 100       # Matrix size (reduced for test speed)

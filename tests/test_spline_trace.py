@@ -1,14 +1,33 @@
+"""
+Tests for spline trace (degrees of freedom) calculations.
+
+This module verifies the agreement between different algorithms for
+computing the trace of the hat matrix (effective degrees of freedom) for
+a smoothing spline.
+"""
 import numpy as np
 import pytest
 
-from scatter_smooth.fitter import SplineSmoother
-from scatter_smooth._spline_extension import CubicSplineTraceCpp, ReinschSmoother
+from scatter_smooth import SplineSmoother
+from scatter_smooth._scatter_smooth_extension import CubicSplineTraceCpp, ReinschSmoother
 
 @pytest.mark.parametrize("lam", np.logspace(-10, 2, 10))
 def test_unweighted_trace_cpp_agreement(lam):
     """
-    Compare the O(N) trace calculation, the basis form calculation,
-    and the sparse solve calculation across a grid of lambda values.
+    Compare O(N) trace, basis form, and sparse solve calculations.
+
+    This test checks three different methods for calculating the effective
+    degrees of freedom (trace of the hat matrix S) for an unweighted
+    smoothing spline across a range of lambda values:
+
+    1.  **O(N) Fast Trace (Takahashi's Algorithm)**: An efficient method
+        specifically for the unweighted case with knots at all data points.
+    2.  **Basis Form Calculation**: The general method using the spline
+        basis and penalty matrices.
+    3.  **Sparse Solve Calculation**: A method implemented in the Reinsch
+        smoother that uses a sparse solver.
+
+    The test asserts that all three methods produce nearly identical results.
     """
     rng = np.random.default_rng(2023)
     x = np.sort(rng.uniform(0, 10, 100))
@@ -26,7 +45,7 @@ def test_unweighted_trace_cpp_agreement(lam):
     # 2. Basis form DF calculation
     fitter_all_knots._use_reinsch = False
     fitter_all_knots._cpp_fitter = None # Force re-initialization
-    from scatter_smooth._spline_extension import NaturalSplineSmoother
+    from scatter_smooth._scatter_smooth_extension import NaturalSplineSmoother
     fitter_all_knots._setup_scaling_and_knots()
     x_scaled = fitter_all_knots.x_scaled_
     knots_scaled = fitter_all_knots.knots_scaled_

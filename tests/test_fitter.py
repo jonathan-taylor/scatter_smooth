@@ -1,6 +1,18 @@
+"""
+High-level tests for the SplineSmoother.
+
+This module contains tests for the main `SplineSmoother` class, verifying
+its functionality in various configurations. It includes:
+- Basic fitting with `lamval` and `df`.
+- Comparison of the Reinsch form EDF calculation with a dense matrix formulation.
+- Fitting with a reduced number of knots.
+- Verification of linear extrapolation.
+- Comparison with R's `smooth.spline` implementation.
+- Testing of the GCV-based smoothing parameter selection.
+"""
 import numpy as np
 import pytest
-from scatter_smooth.fitter import SplineSmoother
+from scatter_smooth import SplineSmoother
 from tests.spline_fitter import SplineSmoother as SplineSmootherPy, compute_edf_reinsch
 
 # Setup for R comparison
@@ -12,14 +24,16 @@ try:
 except ImportError:
     R_ENABLED = False
 
-from scatter_smooth._spline_extension import NaturalSplineSmoother as ExtSplineSmootherCpp
+from scatter_smooth._scatter_smooth_extension import NaturalSplineSmoother as ExtSplineSmootherCpp
 
 # Create a fixture to parametrize tests over both implementations
 @pytest.fixture()
 def fitter_cls(request):
+    """Fixture to provide the SplineSmoother class to tests."""
     return SplineSmoother
 
 def test_scatter_smooth_lamval(fitter_cls):
+    """Test fitting with a specified lambda value."""
     rng = np.random.default_rng(0)
     x = np.linspace(0, 1, 100)
     y = np.sin(2 * np.pi * x) + rng.standard_normal(100) * 0.1
@@ -31,6 +45,7 @@ def test_scatter_smooth_lamval(fitter_cls):
     assert y_pred.shape == x.shape
 
 def test_scatter_smooth_df(fitter_cls):
+    """Test fitting with a specified degrees of freedom."""
     rng = np.random.default_rng(1)
     x = np.linspace(0, 1, 100)
     y = np.sin(2 * np.pi * x) + rng.standard_normal(100) * 0.1

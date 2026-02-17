@@ -21,14 +21,15 @@ sources = [
   'src/utils.cpp',
   'src/natural_spline.cpp',
   'src/reinsch.cpp',
-  'src/bspline.cpp'
+  'src/bspline.cpp',
+  'src/loess.cpp'
 ]
 
 # Extension module
-# This compiles the C++ code into an extension module named '_spline_extension'
+# This compiles the C++ code into an extension module named '_scatter_smooth_extension'
 # and installs it into the 'scatter_smooth' directory.
 py.extension_module(
-  '_spline_extension',
+  '_scatter_smooth_extension',
   sources,
   include_directories : inc,
   dependencies : pybind11_dep,
@@ -42,7 +43,8 @@ py.install_sources(
     [
         'scatter_smooth/__init__.py',
         'scatter_smooth/datasets.py',
-        'scatter_smooth/fitter.py',
+        'scatter_smooth/splines.py',
+        'scatter_smooth/loess.py',
     ],
     subdir: 'scatter_smooth'
 )

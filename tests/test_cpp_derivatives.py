@@ -1,10 +1,25 @@
+"""
+Tests for the derivatives of the C++ natural spline basis.
+
+This module verifies the correctness of the derivatives of the C++ natural
+spline basis implementation. It compares the 0th, 1st, and 2nd derivatives
+against the equivalent derivatives from `scipy.interpolate.CubicSpline`.
+The extrapolation behavior of the derivatives is also tested.
+"""
 import numpy as np
 import pytest
 from scipy.interpolate import CubicSpline
 
-from scatter_smooth._spline_extension import compute_natural_spline_basis
+from scatter_smooth._scatter_smooth_extension import compute_natural_spline_basis
 
 def test_cpp_basis_derivatives():
+    """
+    Test that the C++ basis derivatives match scipy's implementation.
+
+    This test computes the 0th, 1st, and 2nd derivatives of the natural
+    spline basis using both the C++ function and `scipy.CubicSpline`.
+    It asserts that the results are all-close for each derivative order.
+    """
     rng = np.random.default_rng(300)
     x = np.sort(rng.uniform(0, 10, 50))
     knots = np.sort(rng.uniform(0, 10, 8))
@@ -28,6 +43,15 @@ def test_cpp_basis_derivatives():
     np.testing.assert_allclose(cpp_2, scipy_2, atol=1e-8)
 
 def test_cpp_basis_derivatives_extrapolation():
+    """
+    Test the extrapolation behavior of the C++ basis derivatives.
+
+    For linear extrapolation:
+    - The 1st derivative should be constant outside the knot boundaries.
+    - The 2nd derivative should be zero outside the knot boundaries.
+
+    This test verifies both of these conditions.
+    """
     # Linear extrapolation means:
     # 1st derivative constant outside
     # 2nd derivative zero outside

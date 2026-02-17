@@ -1,7 +1,25 @@
+"""
+Tests for comparing different methods of df calculation.
+
+This module verifies that the fast Takahashi algorithm for computing the
+effective degrees of freedom (df) for a B-spline smoother yields the same
+result as the direct, but slower, computation by taking the trace of the
+hat matrix.
+"""
 import numpy as np
-from scatter_smooth.fitter import SplineSmoother
+from scatter_smooth import SplineSmoother
 
 def test_bspline_df_takahashi():
+    """
+    Test that the Takahashi df calculation matches the C++ trace method.
+
+    This test initializes a B-spline smoother and computes the effective
+    degrees of freedom for a given lambda using two methods:
+    1. The fast Takahashi algorithm implemented in Python.
+    2. The direct trace-of-hat-matrix method implemented in C++.
+
+    It then asserts that the results from both methods are all-close.
+    """
     np.random.seed(42)
     n = 100
     x = np.sort(np.random.rand(n))

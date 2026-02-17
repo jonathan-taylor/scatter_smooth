@@ -1,11 +1,31 @@
+"""
+Tests for the B-spline fitter in scatter_smooth.
+
+These tests compare the B-spline implementation with the natural spline
+implementation, ensuring that they produce similar results for the same
+smoothing parameter. It also tests the degrees-of-freedom calculation and the
+GCV-based smoothing parameter selection.
+"""
 import numpy as np
 import pytest
-from scatter_smooth.fitter import SplineSmoother
+from scatter_smooth import SplineSmoother
 
 @pytest.mark.parametrize("n_samples", [50, 100])
 @pytest.mark.parametrize("weighted", [False, True])
 @pytest.mark.parametrize("unequal_x", [False, True])
 def test_compare_bspline_natural_spline(n_samples, weighted, unequal_x):
+    """
+    Compare B-spline and natural spline smoothers.
+
+    This test verifies that for a given lambda, the B-spline and natural
+    spline smoothers produce nearly identical results, both for interpolation
+    within the data range and for linear extrapolation outside of it.
+
+    It checks various conditions:
+    - Different numbers of samples.
+    - Weighted and unweighted fits.
+    - Equally and unequally spaced data points.
+    """
     np.random.seed(42)
     
     if unequal_x:
@@ -63,6 +83,13 @@ def test_compare_bspline_natural_spline(n_samples, weighted, unequal_x):
     assert mse_extra < 1e-6
 
 def test_bspline_solve_for_df():
+    """
+    Test that the B-spline fitter can correctly solve for a target df.
+
+    This test fits a B-spline smoother with a specified number of degrees of
+    freedom and verifies that the resulting effective degrees of freedom
+    (computed from the fitted lambda) is close to the target value.
+    """
     rng = np.random.default_rng(42)
     n = 50
     x = np.sort(rng.uniform(0, 1, n))
@@ -84,6 +111,12 @@ def test_bspline_solve_for_df():
     assert np.isclose(computed_df, target_df, rtol=1e-4)
 
 def test_bspline_solve_gcv():
+    """
+    Test the GCV functionality for B-spline smoothers.
+
+    This test ensures that the `solve_gcv` method runs without error and
+    finds a reasonable smoothing parameter (lambda > 0).
+    """
     rng = np.random.default_rng(43)
     n = 50
     x = np.sort(rng.uniform(0, 1, n))
