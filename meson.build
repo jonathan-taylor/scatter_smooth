@@ -43,6 +43,7 @@ py.install_sources(
         'scatter_smooth/__init__.py',
         'scatter_smooth/datasets.py',
         'scatter_smooth/fitter.py',
+        'scatter_smooth/loess.py',
     ],
     subdir: 'scatter_smooth'
 )

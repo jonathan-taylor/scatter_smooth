@@ -359,7 +359,11 @@ class SplineSmoother:
         """
         self.w = w
         if hasattr(self._cpp_fitter, "update_weights"):
-             self._cpp_fitter.update_weights(self.w)
+             if self.engine == 'reinsch' and hasattr(self, '_inverse_indices') and self._inverse_indices is not None:
+                 w_agg = np.bincount(self._inverse_indices, weights=w)
+                 self._cpp_fitter.update_weights(w_agg)
+             else:
+                 self._cpp_fitter.update_weights(self.w)
         else:
              # Re-create fitter if update_weights is not supported (e.g. BSpline currently)
              self._prepare_matrices()

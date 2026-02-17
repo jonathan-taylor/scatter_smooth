@@ -2,149 +2,193 @@ from dataclasses import dataclass, field
 import numpy as np
 
 @dataclass
-class LowessFitterNaive:
+class LoessSmoother:
     """
-    Naive LowessFitter implementation using pure Python/NumPy for reference/comparison.
+    LoessSmoother implementation using pure Python/NumPy.
     
     Parameters
     ----------
     x : np.ndarray
-        Predictor values (1D).
+        The predictor variable.
     w : np.ndarray, optional
-        Observation weights.
-    span : float, default=0.75
-        Smoothing parameter (fraction of points to use as neighbors).
-    degree : int, default=1
-        Polynomial degree for local regression (0, 1, or 2).
+        Weights for the observations.
+    span : float, optional
+        The smoothing parameter (fraction of points to use as neighbors). Default is 0.75.
+    degree : int, optional
+        The degree of the local polynomial (0, 1, 2, or 3). Default is 1.
     """
 
     x: np.ndarray
     w: np.ndarray = None
     span: float = 0.75
     degree: int = 1
+    
     y: np.ndarray = field(init=False, default=None)
+    intercept_: float = field(init=False, default=None)
+    coef_: float = field(init=False, default=None)
 
-    def fit(self, y, sample_weight=None):
+    def __post_init__(self):
+        self.x = np.asarray(self.x, dtype=float)
+        if self.w is not None:
+            self.w = np.asarray(self.w, dtype=float)
+        if self.degree not in [0, 1, 2, 3]:
+            raise ValueError("Degree must be in range [0, 3].")
+
+    def smooth(self, y, sample_weight=None):
         """
-        Fit the Lowess model (store data).
+        Fit the Loess model.
 
         Parameters
         ----------
         y : np.ndarray
             Response variable.
         sample_weight : np.ndarray, optional
-            Observation weights.
+            Observation weights. If provided, updates the instance weights.
         """
-        self.y = np.asarray(y)
+        self.y = np.asarray(y, dtype=float)
         if sample_weight is not None:
-            self.w = np.asarray(sample_weight)
-        
-        if not isinstance(self.x, np.ndarray):
-            self.x = np.asarray(self.x)
-        if self.w is not None and not isinstance(self.w, np.ndarray):
-            self.w = np.asarray(self.w)
+            self.w = np.asarray(sample_weight, dtype=float)
 
-    def predict(self, x_new):
+        # Compute intercept and coef (global linear part of the fit) for consistency
+        y_hat = self.predict(self.x)
+        w_eff = self.w if self.w is not None else np.ones(len(self.x))
+        
+        X = np.vander(self.x, 2)
+        Xw = X * w_eff[:, None]
+        yw = y_hat * w_eff
+        beta = np.linalg.lstsq(Xw, yw, rcond=None)[0]
+
+        self.intercept_ = beta[1]
+        self.coef_ = beta[0]
+
+    def update_weights(self, w):
         """
-        Predict response for new points.
+        Update the observation weights.
 
         Parameters
         ----------
-        x_new : np.ndarray
-            Points to predict at.
+        w : np.ndarray
+            New weights.
+        """
+        self.w = np.asarray(w, dtype=float)
 
+    @property
+    def nonlinear_(self):
+        """
+        The non-linear component of the fitted loess curve.
+        """
+        if self.coef_ is None:
+            return None
+        linear_part = self.coef_ * self.x + self.intercept_
+        return self.predict(self.x) - linear_part
+
+    def predict(self, x_new, deriv=0):
+        """
+        Predict the response for a new set of predictor variables.
+        
+        Parameters
+        ----------
+        x_new : np.ndarray
+            The predictor variables.
+        deriv : int, optional
+            The order of the derivative to compute (default is 0).
+            
         Returns
         -------
         np.ndarray
-            Predicted values.
+            The predicted response or its derivative.
         """
-        x_new = np.atleast_1d(x_new)
+        if self.y is None:
+            raise ValueError("Model has not been fitted yet. Call smooth(y) first.")
+            
+        x_new = np.atleast_1d(x_new).astype(float)
         n = len(self.x)
         k = int(np.ceil(self.span * n))
         k = max(k, self.degree + 1)
+        k = min(k, n) # Ensure k doesn't exceed n
 
         y_pred = np.zeros_like(x_new, dtype=float)
         
         obs_weights = self.w if self.w is not None else np.ones(n)
 
+        # Pre-compute powers for x if needed? No, local x changes.
+        
         for i, val in enumerate(x_new):
             # 1. Distances
             dists = np.abs(self.x - val)
             
             # 2. Find k nearest neighbors
-            if k >= n:
-                 idx = np.arange(n)
-            else:
-                 idx = np.argpartition(dists, k-1)[:k]
+            # We need the k-th smallest distance.
+            # partial sort is O(n)
+            idx = np.argpartition(dists, k-1)[:k]
             
-            # 3. Compute Max Distance (Delta)
+            # 3. Compute Max Distance (Delta) within the neighborhood
+            # The window width is the distance to the k-th nearest neighbor
             max_dist = dists[idx].max()
             
-            if max_dist <= 0:
+            # 4. Tricube weights
+            if max_dist <= 1e-14:
+                # All points in neighborhood are identical to val?
+                # Or k is very small?
                 weights = np.ones(len(idx))
             else:
-                # 4. Tricube weights
                 u = dists[idx] / max_dist
-                weights = (1 - u**3)**3
-                weights[u >= 1] = 0
+                # Tricube: (1 - u^3)^3 for |u| < 1
+                weights = np.clip(1 - u**3, 0, None)**3
             
             # Combine with observation weights
             total_weights = weights * obs_weights[idx]
             
-            if np.sum(total_weights) == 0:
+            if np.sum(total_weights) < 1e-14:
                 y_pred[i] = np.nan
                 continue
 
             # 5. Local Regression
-            x_local = self.x[idx] - val
+            x_local = self.x[idx] - val # Center at prediction point
             y_local = self.y[idx]
             
+            # Weighted Least Squares
+            # Design Matrix: [1, x, x^2, ...]
+            # We want the value at x=val, which corresponds to x_local=0.
+            # So we just need the intercept (beta[0]).
+            # If deriv=1, we need beta[1].
+            
+            # Construct Vandermonde matrix
+            # shape (k, degree+1)
+            # x_local is shape (k,)
+            
+            # Use sqrt weights for lstsq
             sqrt_w = np.sqrt(total_weights)
             
-            # Design Matrix
+            # Using vander: columns are x^(deg), x^(deg-1), ..., 1
+            # We want 1, x, x^2 for easier indexing? 
+            # np.vander(..., increasing=True) gives 1, x, x^2
+            
             X_des = np.vander(x_local, self.degree + 1, increasing=True)
             
             X_w = X_des * sqrt_w[:, None]
             y_w = y_local * sqrt_w
             
             try:
+                # Solve (X'W X) beta = X'W y
+                # lstsq returns beta, residuals, rank, singular values
                 beta, _, _, _ = np.linalg.lstsq(X_w, y_w, rcond=None)
-                y_pred[i] = beta[0]
+                
+                # The prediction is sum(beta[j] * 0^j). 
+                # Since we centered x, the value at x_new (local 0) is beta[0].
+                # The first derivative is beta[1] * 1!
+                # The second derivative is beta[2] * 2!
+                # The d-th derivative is beta[d] * d!
+                
+                if deriv == 0:
+                    y_pred[i] = beta[0]
+                elif deriv <= self.degree:
+                    import math
+                    y_pred[i] = beta[deriv] * math.factorial(deriv)
+                else:
+                    y_pred[i] = 0.0
+                    
             except np.linalg.LinAlgError:
                 y_pred[i] = np.nan
 
         return y_pred
-
-
-class LowessFitter:
-    """
-    LowessFitter implementation using C++ extension.
-    """
-    def __init__(self, x, w=None, span=0.75, degree=1):
-        self.x = np.asarray(x, dtype=np.float64)
-        self.w = np.asarray(w, dtype=np.float64) if w is not None else None
-        self.span = span
-        self.degree = degree
-        self._cpp_fitter = None
-        
-        self._init_cpp()
-
-    def _init_cpp(self):
-        try:
-            from smoothing_spline._spline_extension import LowessFitterCpp
-            self._cpp_fitter = LowessFitterCpp(self.x, self.w, self.span, self.degree)
-        except ImportError:
-            raise ImportError("C++ extension `_spline_extension` could not be imported. Ensure it is built.")
-
-    def fit(self, y, sample_weight=None):
-        y = np.asarray(y, dtype=np.float64)
-        if sample_weight is not None:
-             self.w = np.asarray(sample_weight, dtype=np.float64)
-             # Re-init because weights are constructor args in C++ currently
-             self._init_cpp()
-             
-        self._cpp_fitter.fit(y)
-
-    def predict(self, x_new):
-        x_new = np.asarray(x_new, dtype=np.float64)
-        return self._cpp_fitter.predict(x_new)
