@@ -28,7 +28,7 @@ import os
 # Ensure we can import from tests
 sys.path.append(os.path.abspath('..'))
 
-from scatter_smooth.fitter import SplineSmoother
+from scatter_smooth import SplineSmoother
 try:
     from tests.spline_fitter import SplineSmoother as SplineSmootherPy
 except ImportError:
@@ -147,6 +147,12 @@ y = np.sin(x) + rng.normal(0, 0.1, n)
 ```{code-cell} ipython3
 %%timeit
 fitter = SplineSmoother(x, n_knots=K)
+best_lam = fitter.solve_gcv(y)
+```
+
+```{code-cell} ipython3
+%%timeit
+fitter = SplineSmoother(x)
 best_lam = fitter.solve_gcv(y)
 ```
 
