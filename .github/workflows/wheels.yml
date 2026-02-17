@@ -35,7 +35,7 @@ jobs:
       fail-fast: false
       matrix:
         # Add windows-latest to the build matrix
-        os: windows-latest
+        os: [windows-latest]
 
     steps:
       - name: Set up Python
