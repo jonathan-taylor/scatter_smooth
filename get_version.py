@@ -19,3 +19,5 @@ def get_version():
     except Exception:
         return "0.0.0"
 
+if __name__ == "__main__":
+    print(get_version())
