@@ -50,6 +50,8 @@ jobs:
 
       - name: Build wheels
         uses: pypa/cibuildwheel@v3.3.1 # Use the latest version
+          # Only build 64-bit wheels (skips the broken win32 build)
+          CIBW_ARCHS: auto64
 
       - name: Upload wheel artifacts
         uses: actions/upload-artifact@v4
