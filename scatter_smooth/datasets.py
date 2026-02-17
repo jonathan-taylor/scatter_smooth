@@ -24,4 +24,4 @@ def load_bikeshare():
         print("pandas is not installed. Please install it to run this example.")
 
     """
-    return resources.files('smoothing_spline').joinpath('data/bikeshare.csv').open('r')
+    return resources.files('scatter_smooth').joinpath('data/bikeshare.csv').open('r')

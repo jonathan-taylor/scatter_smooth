@@ -1,8 +1,8 @@
 [project]
-name = "smoothing_spline"
+name = "scatter_smooth"
 dynamic = ["version"]
 authors = [
-  {name="Jonathan Taylor", email="jonathan.taylor.stanford@gmail.com"},
+  {name="Jonathan Taylor", email="jonathan.taylor@stanford.edu"},
 ]
 description = "Minimal Smoothing Spline Fitter. Provides an scikit-learn estimator"
 readme = "README.md"
@@ -39,4 +39,4 @@ requires = ["meson-python>=0.13.1", "pybind11", "ninja", "patchelf; platform_sys
 build-backend = "mesonpy"
 
 [tool.setuptools_scm]
-write_to = "smoothing_spline/_version.py"
+write_to = "scatter_smooth/_version.py"

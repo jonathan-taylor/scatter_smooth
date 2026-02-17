@@ -1,4 +1,4 @@
-project('smoothing_spline', 'cpp',
+project('scatter_smooth', 'cpp',
   version : '0.1',
   default_options : ['warning_level=3', 'cpp_std=c++14'])
 
@@ -26,27 +26,27 @@ sources = [
 
 # Extension module
 # This compiles the C++ code into an extension module named '_spline_extension'
-# and installs it into the 'smoothing_spline' directory.
+# and installs it into the 'scatter_smooth' directory.
 py.extension_module(
   '_spline_extension',
   sources,
   include_directories : inc,
   dependencies : pybind11_dep,
   install : true,
-  subdir : 'smoothing_spline'
+  subdir : 'scatter_smooth'
 )
 
 # Install Python sources
-# This installs the 'smoothing_spline' python package.
+# This installs the 'scatter_smooth' python package.
 py.install_sources(
     [
-        'smoothing_spline/__init__.py',
-        'smoothing_spline/datasets.py',
-        'smoothing_spline/fitter.py',
+        'scatter_smooth/__init__.py',
+        'scatter_smooth/datasets.py',
+        'scatter_smooth/fitter.py',
     ],
-    subdir: 'smoothing_spline'
+    subdir: 'scatter_smooth'
 )
 install_subdir(
-    'smoothing_spline/data',
-    install_dir: py.get_install_dir() / 'smoothing_spline'
+    'scatter_smooth/data',
+    install_dir: py.get_install_dir() / 'scatter_smooth'
 )
