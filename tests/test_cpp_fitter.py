@@ -1,3 +1,14 @@
+"""
+Tests for the C++ natural spline fitter.
+
+This module contains tests that verify the C++ implementation of the natural
+spline smoother against a pure Python implementation. It checks:
+- The correctness of the constructed basis (N) and penalty (Omega) matrices.
+- The consistency of the fitted spline coefficients (alpha).
+- The handling of weights.
+- The calculation of effective degrees of freedom (df).
+- The prediction on training and new data, including extrapolation.
+"""
 import numpy as np
 import pytest
 from scipy import sparse
@@ -8,6 +19,15 @@ from tests.spline_fitter import SplineSmoother as SplineSmootherPy
 from scatter_smooth._scatter_smooth_extension import NaturalSplineSmoother as ExtSplineSmootherCpp
 
 def test_cpp_fitter_integration():
+    """
+    Test the integration of the C++ fitter with Python.
+
+    This test ensures that the C++ fitter, when given properly scaled data,
+    produces the same basis and penalty matrices as the Python implementation.
+    It also verifies that the end-to-end fitting process (solving for alpha)
+    yields the same result when accounting for the scaling of the smoothing
+    parameter lambda.
+    """
     rng = np.random.default_rng(99)
     x = np.sort(rng.uniform(0, 10, 50))
     knots = np.sort(rng.uniform(0, 10, 10))
@@ -55,6 +75,13 @@ def test_cpp_fitter_integration():
     np.testing.assert_allclose(cpp_alpha, py_alpha, atol=1e-5)
 
 def test_cpp_fitter_weights():
+    """
+    Test that the C++ fitter handles weights correctly.
+
+    This test compares the fitted coefficients from the C++ and Python
+    implementations when observation weights are provided. It ensures that
+    the C++ fitter produces the same results as the Python reference.
+    """
     rng = np.random.default_rng(100)
     x = np.sort(rng.uniform(0, 10, 50))
     knots = np.sort(rng.uniform(0, 10, 10))
@@ -84,6 +111,13 @@ def test_cpp_fitter_weights():
     np.testing.assert_allclose(cpp_alpha, py_alpha, atol=1e-5)
 
 def test_cpp_df():
+    """
+    Test the degrees of freedom calculation in C++.
+
+    This test verifies that the C++ `compute_df` method produces the same
+    effective degrees of freedom as the Python implementation, which is
+    calculated by tracing the hat matrix S.
+    """
     rng = np.random.default_rng(101)
     x = np.sort(rng.uniform(0, 10, 50))
     knots = np.sort(rng.uniform(0, 10, 10))
@@ -107,6 +141,14 @@ def test_cpp_df():
     np.testing.assert_allclose(cpp_df, py_df, atol=1e-5)
 
 def test_cpp_prediction():
+    """
+    Test the prediction capabilities of the C++ fitter.
+
+    This test compares the predicted values from the high-level C++-based
+    `SplineSmoother` with the pure Python implementation. It checks for
+    consistency on both the training data and new data points, including
+    extrapolation outside the original data range.
+    """
     # Helper already imports SplineSmoother as SplineSmootherPy
     rng = np.random.default_rng(102)
     x = np.sort(rng.uniform(0, 10, 50))

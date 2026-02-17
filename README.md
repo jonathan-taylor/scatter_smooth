@@ -13,11 +13,18 @@ This repository provides a minimal, high-performance implementation of a smoothi
 
 ## Installation
 
-You can install the package directly from this repository using `pip`:
+For standard usage, you can install the package directly from this repository using `pip`:
 
 ```bash
 pip install .
 ```
+
+For development, you can install the package in editable mode with the `--no-build-isolation` flag:
+
+```bash
+pip install -e . --no-build-isolation
+```
+
 
 ## Usage Example
 

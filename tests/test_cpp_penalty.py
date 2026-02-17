@@ -1,3 +1,10 @@
+"""
+Tests for the C++ penalty matrix implementation.
+
+This module verifies the correctness of the C++ function
+`compute_penalty_matrix` by comparing its output to a reference
+implementation based on the definitions from Friedman et al. (ESL).
+"""
 import numpy as np
 import pytest
 from scipy import sparse
@@ -6,6 +13,14 @@ from scipy.sparse import linalg as splinalg
 from scatter_smooth._scatter_smooth_extension import compute_penalty_matrix
 
 def test_cpp_penalty_matches_scipy():
+    """
+    Verify that the C++ penalty matrix matches the reference implementation.
+
+    This test constructs the natural spline penalty matrix Omega using both the
+    C++ function and a Python implementation based on the sparse matrix
+    definitions from "The Elements of Statistical Learning". It then asserts
+    that the resulting matrices are all-close.
+    """
     rng = np.random.default_rng(55)
     knots = np.sort(rng.uniform(0, 10, 15))
     

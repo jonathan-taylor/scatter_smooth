@@ -1,3 +1,10 @@
+"""
+Tests for spline derivatives.
+
+This module contains tests for the derivatives of the fitted spline.
+It verifies that the predicted derivatives of a known function (a simple
+quadratic) are close to the analytical derivatives.
+"""
 import numpy as np
 import pytest
 from scatter_smooth import SplineSmoother

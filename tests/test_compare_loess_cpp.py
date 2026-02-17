@@ -1,8 +1,24 @@
+"""
+Tests comparing the C++ and Python implementations of LOESS.
+
+This module verifies that the C++ implementation of the LOESS smoother
+produces results that are consistent with the pure Python implementation.
+It checks both the predicted values and their derivatives.
+"""
 import numpy as np
 from .loess import LoessSmoother as LoessSmootherPy
 from scatter_smooth import LoessSmoother 
 
 def test_compare_cpp_python_loess():
+    """
+    Compare C++ and Python LOESS implementations for consistency.
+
+    This test fits a LOESS model to noisy sinusoidal data using both the
+    C++ and Python versions of the `LoessSmoother`. It then checks that
+    the predicted values on a new set of points are nearly identical.
+    It also compares the first derivatives if the polynomial degree is
+    sufficient.
+    """
     rng = np.random.default_rng(42)
     n = 100
     x = np.linspace(0, 10, n)

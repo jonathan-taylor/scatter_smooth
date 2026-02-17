@@ -1,8 +1,25 @@
+"""
+Tests for updating sample weights in smoothers.
+
+This module verifies the functionality of the `update_weights` and
+`smooth(sample_weight=...)` methods for both `LoessSmoother` and
+`SplineSmoother`. It ensures that updating the weights and refitting
+produces the same result as creating a new smoother instance with the
+new weights.
+"""
 import numpy as np
 import pytest
 from scatter_smooth import SplineSmoother, LoessSmoother
 
 def test_loess_update_weights():
+    """
+    Test the `update_weights` method for LoessSmoother.
+
+    This test checks that fitting a LOESS model, updating the weights, and
+    refitting gives the same result as fitting a new model with the updated
+    weights from scratch. It also verifies that the `smooth(sample_weight=...)`
+    shortcut produces the correct result.
+    """
     rng = np.random.default_rng(42)
     n = 50
     x = np.linspace(0, 10, n)
@@ -37,6 +54,14 @@ def test_loess_update_weights():
 
 @pytest.mark.parametrize("engine", ["bspline", "natural", "reinsch"])
 def test_spline_update_weights(engine):
+    """
+    Test the `update_weights` method for SplineSmoother with various engines.
+
+    This test verifies that the weight update mechanism works correctly for all
+    spline smoother backends ('bspline', 'natural', 'reinsch'). It compares
+    the result of updating weights on an existing instance to a fresh fit with
+    the new weights. It also tests the `smooth(sample_weight=...)` method.
+    """
     rng = np.random.default_rng(42)
     n = 50
     x = np.sort(rng.uniform(0, 10, n))
@@ -93,6 +118,13 @@ def test_spline_update_weights(engine):
                                err_msg=f"SplineSmoother ({engine}) smooth(sample_weight=...) failed")
 
 def test_reinsch_ties():
+    """
+    Test weight updates for the Reinsch engine when there are ties in x.
+
+    The Reinsch engine is only used when the knots are the unique values of x.
+    This test ensures that the weight update mechanism works correctly in this
+    scenario, especially when the original x data contains duplicate values.
+    """
     rng = np.random.default_rng(42)
     x = np.array([1.0, 1.0, 2.0, 2.0, 3.0, 3.0])
     y = x + rng.normal(0, 0.1, 6)

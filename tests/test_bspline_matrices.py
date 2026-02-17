@@ -1,9 +1,35 @@
+"""
+Tests for the B-spline basis and penalty matrices.
+
+This module verifies the correctness of the B-spline basis matrix (N), the
+weighted crossproduct matrix (N^T W N), and the penalty matrix (Omega) by
+comparing them against a reference implementation using `scipy.interpolate.BSpline`.
+It also checks the evaluation of basis functions and their derivatives.
+"""
 import numpy as np
 import pytest
 from scipy.interpolate import BSpline
 from scatter_smooth import SplineSmoother
 
 def compute_ref_matrices(x, knots, order=4, weights=None):
+    """
+    Compute reference B-spline matrices using scipy.
+
+    This function constructs the B-spline basis matrix `N` and the penalty
+    matrix `Omega` using `scipy.interpolate.BSpline` as a ground truth.
+
+    Args:
+        x (np.ndarray): The x-coordinates of the data points.
+        knots (np.ndarray): The interior knots of the spline.
+        order (int, optional): The order of the spline. Defaults to 4 (cubic).
+        weights (np.ndarray, optional): Weights for the data points.
+            Defaults to None (uniform weights).
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]: A tuple containing:
+            - NTWN: The matrix N^T @ W @ N.
+            - Omega: The penalty matrix.
+    """
     if weights is None:
         weights = np.ones(len(x))
     W = np.diag(weights)
@@ -57,6 +83,19 @@ def compute_ref_matrices(x, knots, order=4, weights=None):
 @pytest.mark.parametrize("uniform", [True, False])
 @pytest.mark.parametrize("weighted", [False, True])
 def test_matrices(n_samples, uniform, weighted):
+    """
+    Test that the C++ matrices match the scipy reference implementation.
+
+    This test covers various scenarios:
+    - Different numbers of samples.
+    - Uniform and non-uniform knots.
+    - Weighted and unweighted data.
+
+    It checks:
+    - The knot vector used in the C++ implementation.
+    - The evaluation of the basis functions and their first two derivatives.
+    - The NTWN and Omega matrices.
+    """
     np.random.seed(123)
     if uniform:
         x = np.linspace(0, 1, n_samples)
