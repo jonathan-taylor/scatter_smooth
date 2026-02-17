@@ -1,7 +1,7 @@
 """
 Tests for the LOWESS smoother.
 
-This module contains tests for the `LowessSmoother`, comparing its
+This module contains tests for the `LoessSmoother`, comparing its
 implementation against a naive Python version to ensure consistency. It
 includes tests for:
 - Basic fitting and prediction with different spans and polynomial degrees.
@@ -10,7 +10,7 @@ includes tests for:
 """
 import numpy as np
 import pytest
-from scatter_smooth.loess import LowessSmoother
+from scatter_smooth.loess import LoessSmoother
 from .loess import LoessSmoother as LoessSmootherNaive
 
 def test_lowess_consistency():
@@ -25,11 +25,11 @@ def test_lowess_consistency():
     # Test for different spans and degrees
     for span in [0.3, 0.7]:
         for degree in [1, 2]:
-            py_fitter = LowessSmootherNaive(x, span=span, degree=degree)
-            cpp_fitter = LowessSmoother(x, span=span, degree=degree)
+            py_fitter = LoessSmootherNaive(x, span=span, degree=degree)
+            cpp_fitter = LoessSmoother(x, span=span, degree=degree)
             
-            py_fitter.fit(y)
-            cpp_fitter.fit(y)
+            py_fitter.smooth(y)
+            cpp_fitter.smooth(y)
             
             x_new = np.linspace(0, 10, 50)
             
@@ -50,11 +50,11 @@ def test_lowess_weights():
     y = x * 0.5 + rng.normal(0, 0.5, n)
     w = rng.uniform(0.1, 2.0, n)
     
-    py_fitter = LowessSmootherNaive(x, w=w, span=0.5, degree=1)
-    cpp_fitter = LowessSmoother(x, w=w, span=0.5, degree=1)
+    py_fitter = LoessSmootherNaive(x, w=w, span=0.5, degree=1)
+    cpp_fitter = LoessSmoother(x, w=w, span=0.5, degree=1)
     
-    py_fitter.fit(y)
-    cpp_fitter.fit(y)
+    py_fitter.smooth(y)
+    cpp_fitter.smooth(y)
     
     x_new = np.linspace(0, 10, 20)
     
@@ -71,8 +71,8 @@ def test_single_prediction():
     x = np.linspace(0, 10, 20)
     y = np.sin(x)
     
-    fitter = LowessSmoother(x, span=0.5)
-    fitter.fit(y)
+    fitter = LoessSmoother(x, span=0.5)
+    fitter.smooth(y)
     
     val = 5.0
     pred = fitter.predict([val])
