@@ -22,10 +22,9 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest",
-    "rpy2",
     "scipy",
-    "matplotlib",
-    "pandas"
+    "ninja",
+    "meson"
 ]
 doc = [
     "myst-parser",
@@ -36,11 +35,8 @@ doc = [
 ]
 
 [build-system]
-requires = ["setuptools>=61.0", "setuptools_scm[toml]>=6.2", "pybind11"]
-build-backend = "setuptools.build_meta"
-
-[tool.setuptools.package-data]
-smoothing_spline = ["data/*.csv"]
+requires = ["meson-python>=0.13.1", "pybind11", "ninja", "patchelf; platform_system == 'Linux'", "setuptools_scm[toml]>=6.2"]
+build-backend = "mesonpy"
 
 [tool.setuptools_scm]
 write_to = "smoothing_spline/_version.py"
