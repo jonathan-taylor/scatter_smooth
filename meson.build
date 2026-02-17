@@ -1,5 +1,5 @@
 project('scatter_smooth', 'cpp',
-  version : '0.1',
+  version : run_command('get-version.py', check: true).stdout().strip(),
   default_options : ['warning_level=3', 'cpp_std=c++14'])
 
 py = import('python').find_installation(pure: false)
@@ -9,11 +9,6 @@ inc = include_directories('src/eigen')
 
 # Pybind11 dependency
 pybind11_dep = dependency('pybind11')
-# if not pybind11_dep.found()
-#   # Fallback: try to find it via python command if pkg-config fails
-#   pybind11_incdir = run_command(py, ['-c', 'import pybind11; print(pybind11.get_include())'], check : true).stdout().strip()
-#   pybind11_dep = declare_dependency(include_directories : include_directories(pybind11_incdir))
-# endif
 
 # Source files
 sources = [
