@@ -1,15 +1,20 @@
-# Smoothing Spline
+# Scatterplot Smoothers
 
-This repository provides a minimal, high-performance implementation of a smoothing spline, similar to the `smooth.spline` function in R. The core logic is implemented in C++ for speed, with convenient Python bindings provided by `pybind11`. The package is designed to be familiar to users of `scikit-learn`.
+This repository provides minimal, high-performance implementations of key scatterplot smoothers, specifically **Smoothing Splines** and **LOESS**. The core logic is implemented in C++ for speed, with convenient Python bindings provided by `pybind11`. The package is designed to be familiar to users of `scikit-learn` and R's statistical functions.
+
+## Key Smoothers
+
+*   **Smoothing Splines:** A flexible implementation similar to R's `smooth.spline`. It supports multiple fitting engines, including the Reinsch algorithm for $O(N)$ performance, as well as B-spline and natural spline bases.
+*   **LOESS (Locally Estimated Scatterplot Smoothing):** A fast C++ implementation of local polynomial regression, providing a smooth curve through a scatterplot.
 
 ## Key Features
 
 *   **High Performance:** Core computations are in C++, leveraging the Eigen library for efficient linear algebra.
-*   **Flexible Smoothing Control:** Specify smoothness by either degrees of freedom (`df`) or a penalty term (`lambda`).
-*   **Automatic GCV:** Includes a method to find the optimal smoothing parameter via Generalized Cross-Validation (GCV).
-*   **Extrapolation:** Supports linear extrapolation for points outside the training data range.
-*   **R Compatibility:** Tested against R's `smooth.spline` for comparable results.
-*   **Scikit-learn Style API (NOT):** The `SplineSmoother` class uses `smooth(y)`/`predict(x)`. It is not an sklearn estimator, but will be / is wrapped into one in `ISLP`. This is intentional, as there are use cases for this as a lower level object where weights may be updated and the smoother be refit to new data.
+*   **Flexible Smoothing Control:**
+    *   For Splines: Specify smoothness by either degrees of freedom (`df`) or a penalty term (`lambda`). Includes automatic GCV.
+    *   For LOESS: Control smoothness via the `span` and `degree` parameters.
+*   **Extrapolation & Derivatives:** Supports linear extrapolation and computation of derivatives.
+*   **R Compatibility:** Tested against R's `smooth.spline` and `loess` for comparable results.
 
 ## Installation
 
@@ -28,37 +33,42 @@ pip install -e . --no-build-isolation
 
 ## Usage Example
 
-Here is a simple example of how to fit a smoothing spline to noisy data.
+Here is a simple example of how to fit a smoothing spline and a LOESS curve to noisy data.
 
 ```python
 import numpy as np
 import matplotlib.pyplot as plt
-from scatter_smooth.fitter import SplineSmoother
+from scatter_smooth import SplineSmoother, LoessSmoother
 
 # 1. Generate some noisy data
 rng = np.random.default_rng(0)
-x = np.linspace(0, 1, 100)
+x = np.sort(rng.uniform(0, 1, 100))
 y_true = np.sin(2 * np.pi * x)
 y_noisy = y_true + rng.standard_normal(100) * 0.2
 
 # 2. Fit the smoothing spline
-# Specify the desired degrees of freedom (df)
-fitter = SplineSmoother(x, df=8)
-fitter.smooth(y_noisy)
+spline = SplineSmoother(x, df=8)
+spline.smooth(y_noisy)
 
-# 3. Predict on a new set of points
+# 3. Fit the LOESS smoother
+loess = LoessSmoother(x, span=0.3)
+loess.smooth(y_noisy)
+
+# 4. Predict on a new set of points
 x_pred = np.linspace(0, 1, 200)
-y_pred = fitter.predict(x_pred)
+y_spline = spline.predict(x_pred)
+y_loess = loess.predict(x_pred)
 
-# 4. Plot the results
-plt.figure(figsize=(10, 6))
-plt.scatter(x, y_noisy, label='Noisy Data', alpha=0.6)
-plt.plot(x, y_true, 'g--', label='True Function')
-plt.plot(x_pred, y_pred, 'r-', label='Fitted Spline (df=8)', linewidth=2)
-plt.legend()
-plt.title('Smoothing Spline Fit')
-plt.xlabel('x')
-plt.ylabel('y')
+# 5. Plot the results
+fig, ax = plt.subplots(figsize=(10, 6))
+ax.scatter(x, y_noisy, label='Noisy Data', alpha=0.4)
+ax.plot(x, y_true, 'k--', label='True Function')
+ax.plot(x_pred, y_spline, 'r-', label='Smoothing Spline (df=8)', linewidth=2)
+ax.plot(x_pred, y_loess, 'b-', label='LOESS (span=0.3)', linewidth=2)
+ax.set_title('Scatterplot Smoothers')
+ax.set_xlabel('x')
+ax.set_ylabel('y')
+ax.legend()
 plt.show()
 ```
 

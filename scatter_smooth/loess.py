@@ -51,7 +51,7 @@ class LoessSmoother:
         self.y = np.asarray(y, dtype=float)
         if sample_weight is not None:
             self.update_weights(sample_weight)
-        self._cpp_fitter.fit(self.y)
+        self._cpp_fitter.set_y(self.y)
         self._coef = self._intercept = self._y_hat_train = None
 
     def _get_y_hat_train(self):
