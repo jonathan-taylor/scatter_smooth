@@ -138,6 +138,29 @@ diff = np.mean(np.abs(y_py_deg2[valid] - y_r_deg2[valid]))
 print(f"Mean Absolute Difference (Degree 2): {diff:.6f}")
 ```
 
-```{code-cell} ipython3
+## Speed Comparison
 
+We compare the execution time for fitting and predicting with the Loess model. Note that the current Python implementation is naive and purely in Python, so it is expected to be slower than R's optimized C/Fortran implementation, especially when `surface="interpolate"` (default) is used in R. Here we compare against `surface="direct"` in R which is also exact calculation.
+
+```{code-cell} ipython3
+# Python Timing
+print(f"Python Timing (n={n_samples}):")
+# Note: fitting is lazy/storage-only in our python implementation, predict does the work
+%timeit -n 5 -r 3 LoessSmoother(x=x_sub, span=0.75, degree=1).smooth(y_sub); loess_py.predict(x_plot)
+```
+
+```{code-cell} ipython3
+%%R -i x_sub -i y_sub -i x_plot
+if (!require("microbenchmark", quietly = TRUE)) {
+    install.packages("microbenchmark", repos="http://cloud.r-project.org")
+}
+library(microbenchmark)
+
+cat(sprintf("R Timing (n=%d, surface='direct'):\n", length(x_sub)))
+summary(microbenchmark(
+  {
+      fit <- loess(y_sub ~ x_sub, span=0.75, degree=1, family="gaussian", surface="direct")
+      predict(fit, newdata=x_plot)
+  },
+  times=10), unit='milliseconds')[,-1]
 ```
