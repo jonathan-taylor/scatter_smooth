@@ -59,10 +59,12 @@ jobs:
         run: |
           python -m venv "$RUNNER_TEMP/venv"
           "$RUNNER_TEMP/venv/bin/pip" install dist/*.tar.gz pytest
+          # outside the checkout, so the installed package is imported
+          cd "$RUNNER_TEMP"
           version=$("$RUNNER_TEMP/venv/bin/python" -c "import scatter_smooth; print(scatter_smooth.__version__)")
           echo "built version: $version"
           case "$version" in 0.0.0*|0+unknown) echo "bad version"; exit 1;; esac
-          mkdir -p "$RUNNER_TEMP/run" && cp -R tests "$RUNNER_TEMP/run/"
+          mkdir -p "$RUNNER_TEMP/run" && cp -R "$GITHUB_WORKSPACE/tests" "$RUNNER_TEMP/run/"
           cd "$RUNNER_TEMP/run" && "$RUNNER_TEMP/venv/bin/python" -m pytest tests -q
 
       - uses: actions/upload-artifact@v7

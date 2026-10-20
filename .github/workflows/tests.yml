@@ -36,10 +36,12 @@ jobs:
         python-version: ${{ matrix.python-version }}
         cache: pip
 
+    # --vsenv: on Windows, build with MSVC (meson may otherwise pick a MinGW
+    # gcc on the PATH, whose runtime DLLs Python doesn't find); a no-op elsewhere
     - name: Install
       run: |
         python -m pip install --upgrade pip
-        python -m pip install ".[test]"
+        python -m pip install ".[test]" -Csetup-args=--vsenv
 
     # from a copy of the tests in an empty directory: the installed package,
     # not the source tree, is tested
