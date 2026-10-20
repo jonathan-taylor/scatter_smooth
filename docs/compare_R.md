@@ -156,7 +156,6 @@ The `scatter_smooth` package also supports finding $\lambda$ that minimizes the 
 
 ```{code-cell} ipython3
 # Initialize fitter with data
-# Note: We use the internal C++ fitter for speed if available
 fitter = SplineSmoother(x=hr_numeric, knots=np.unique(hr_numeric))
 
 # Solve for GCV
@@ -164,13 +163,8 @@ best_lam = fitter.solve_gcv(bikers)
 print(f"Selected lambda (Python): {best_lam}")
 
 # Get corresponding df
-# We can access the internal fitter to compute DF for verification
-if fitter._cpp_fitter:
-    best_lam_scaled = best_lam / fitter.x_scale_**3
-    best_df = fitter._cpp_fitter.compute_df(best_lam_scaled)
-    print(f"Selected df (Python): {best_df}")
-else:
-    best_df = "N/A (C++ extension not available)"
+best_df = fitter.compute_df(best_lam)
+print(f"Selected df (Python): {best_df}")
 ```
 
 We can now visualize the optimal fit.

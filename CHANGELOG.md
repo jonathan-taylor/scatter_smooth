@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+### Docs
+- The docs workflow builds with Jupyter Book 2 on Python 3.12 (one install of `.[doc]`, R's `microbenchmark` for the comparisons) and deploys from `main` through GitHub Actions; the `tag_name` input, which the Pages environment refused, is removed. `docs/myst.yml` has the project's title and repository, the docs use only public APIs (`compare_cpp.md` compares the Reinsch and B-spline engines), and the `doc` extra requires `jupyter-book>=2` instead of `myst-parser`. (#30)
 ### Fixed
 - `load_bikeshare()` no longer leaves a file open: it returns the CSV read into an `io.StringIO` (still readable by `pandas.read_csv`, and usable in a `with` block). (#25)
 - The build has no warnings: Eigen is included as a system header. (#25)

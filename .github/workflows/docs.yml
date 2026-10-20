@@ -1,76 +1,71 @@
-# This file was created automatically with `myst init --gh-pages` 
+# Builds the docs (Jupyter Book 2, notebooks executed) from the branch it is
+# run on and deploys them to GitHub Pages. The github-pages environment allows
+# deploys from main only, so run it on main (after a release, say).
 
 name: Docs
+
 on:
   workflow_dispatch:
-    inputs:
-      tag_name:
-        description: 'The tag or commit to build docs from'
-        required: true
-        default: 'main'
-        type: string
 
-env:
-  # `BASE_URL` determines the website is served from, including CSS & JS assets
-  # You may need to change this to `BASE_URL: ''`
-  BASE_URL: /${{ github.event.repository.name }}
-
-# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
 permissions:
   contents: read
-  pages: write
-  id-token: write
-# Allow only one concurrent deployment, skipping runs queued between the run in-progress and latest queued.
-# However, do NOT cancel in-progress runs as we want to allow these production deployments to complete.
+
+# one deployment at a time; don't cancel one in progress
 concurrency:
-  group: 'pages'
+  group: pages
   cancel-in-progress: false
+
 jobs:
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+  build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
-          # This logic uses the input if it exists, otherwise defaults to the current ref (main)
-          ref: ${{ github.event.inputs.tag_name || github.ref }}
           fetch-depth: 0 # setuptools_scm needs the tags for the version
           submodules: recursive
 
-      - name: Setup Pages
-        uses: actions/configure-pages@v3
-
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-python@v7
         with:
-          node-version: 18.x
+          python-version: '3.12'
+          cache: pip
 
-      - name: Install MyST Markdown
-        run: npm install -g mystmd
+      # Jupyter Book 2 (mystmd) runs on Node
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
 
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-
-      - name: Set up R
-        uses: r-lib/actions/setup-r@v2
-
-      - name: Install package
+      # R for the comparisons (rpy2, and R's microbenchmark), then the package
+      # and the doc requirements, once
+      - name: Install
         run: |
+          sudo apt-get update
+          sudo apt-get install -y r-base r-cran-microbenchmark
           python -m pip install --upgrade pip
-          pip install .[dev]
-          pip install .[doc]
-          pip install -e . --no-build-isolation
-          pip install jupyterlab
+          pip install ".[doc]"
 
-      - name: Build HTML Assets
-        run: cd docs && myst build --html --execute
+      # BASE_URL: the site is served from https://<owner>.github.io/scatter_smooth/
+      - name: Build
+        env:
+          BASE_URL: /${{ github.event.repository.name }}
+        run: |
+          cd docs
+          jupyter-book build --html --execute --ci
+          test -f _build/html/index.html
 
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
-          path: 'docs/_build/html'
+          path: docs/_build/html
 
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write    # to deploy to Pages
+      id-token: write # to verify the deployment comes from this workflow
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@v6
+      - id: deployment
+        uses: actions/deploy-pages@v5
