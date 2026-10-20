@@ -58,3 +58,27 @@ def test_span_above_one(wage, degree):
     assert np.max(np.abs(fits[2.] - fits[1.])) > 1e-3
     glob = np.polyval(np.polyfit(age, y, degree), age)
     np.testing.assert_allclose(fits[1e8], glob, rtol=1e-6)
+
+
+@pytest.mark.parametrize('degree', [0, 1, 2, 3])
+@pytest.mark.parametrize('span', [0.1, 0.5, 1.5])
+@pytest.mark.parametrize('ties', [False, True])
+def test_leverage_is_the_smoother_diagonal(degree, span, ties):
+    # leverage(): the weight of y_i in the fit at x_i, in one pass; the
+    # diagonal from smoothing the unit vectors, and its sum the df
+    rng = np.random.default_rng(6)
+    n = 120
+    x = rng.uniform(0, 1, n)
+    if ties:
+        x = np.round(x * 15) / 15
+    w = rng.uniform(.5, 2, n)
+    l = LoessSmoother(x, w=w, span=span, degree=degree)
+    lev = l.leverage()
+    diag = np.empty(n)
+    for i in range(n):
+        e = np.zeros(n)
+        e[i] = 1.
+        l.smooth(e)
+        diag[i] = l.predict()[i]
+    np.testing.assert_allclose(lev, diag, rtol=1e-8, atol=1e-12)
+    np.testing.assert_allclose(l.compute_df(), diag.sum(), rtol=1e-8)

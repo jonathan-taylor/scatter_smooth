@@ -15,6 +15,8 @@ class CubicSplineTraceCpp {
     void compute_QR_bands();
 public:
     CubicSplineTraceCpp(const Eigen::Ref<const Eigen::VectorXd>& x, py::object weights_obj);
+    // from the weights directly (no Python objects: callable without the GIL)
+    CubicSplineTraceCpp(const Eigen::Ref<const Eigen::VectorXd>& x, const Eigen::VectorXd& weights);
     double compute_trace(double lam);
 };
 

@@ -114,6 +114,17 @@ class LoessSmoother:
         self._cpp_fitter.update_weights(self.w)
         self._coef = self._intercept = self._y_hat_train = None
 
+    def leverage(self):
+        """
+        The diagonal of the smoother matrix: the weight of each observation
+        in its own fitted value. It doesn't depend on `y`.
+        """
+        return np.asarray(self._cpp_fitter.leverage())
+
+    def compute_df(self):
+        """The degrees of freedom: the trace of the smoother matrix."""
+        return float(self.leverage().sum())
+
     @property
     def nonlinear_(self):
         """

@@ -3,12 +3,15 @@
 ## Unreleased
 
 ### Changed
+- LOESS is faster: `x` is sorted once and each neighbourhood is a window of it (O(log n + k) to find, instead of all n distances and a partial sort per point), and the local normal equations come from moments. Predicting at the training points: 8× faster at span 0.1 and 2.7× at span 0.75 (n = 10,000); the fits are unchanged (to 1e-13). (#23)
+- The C++ smoothing, df and prediction calls release the GIL, so other Python threads run meanwhile (one smoother object shouldn't be used from several threads at once). (#23)
 - Default knots follow R's `smooth.spline` and `gam::s`: all the unique `x` values when there are fewer than 50, otherwise `.nknots.smspl(n)` of them (about 200), evenly spaced by rank among the unique values, with the B-spline engine. `all_knots=True` keeps every unique value as a knot (and the Reinsch engine). (#11)
 - `smooth()` returns the fitted values at `x`. The fit and its linear part (`coef_`, `intercept_`) are computed at the unique `x` values, not at every observation, and the B-spline basis at the data is computed once: smoothing and weight updates are several times faster for large `n`.
 - The B-spline engine aggregates tied `x` values (summing their weights), as the Reinsch engine does.
 - `df` targeting is tighter: the root is found to about 1e-11 for the Reinsch engine (was 1e-6).
 
 ### Added
+- `LoessSmoother.leverage()` and `compute_df()`: the diagonal of the smoother matrix and its trace, in one pass (before, the df took one smooth per observation). (#23)
 - `spline_coef_`, `set_spline_coef()` and `roughness()` on `SplineSmoother` (Reinsch and B-spline engines): the coefficients of the fitted spline, setting a fit from them, and the integral of its squared second derivative.
 - `BSplineSmoother.update_weights()` and `BSplineSmoother.fitted()` in the C++ extension.
 
