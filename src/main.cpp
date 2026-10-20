@@ -53,6 +53,8 @@ PYBIND11_MODULE(_scatter_smooth_extension, m) {
     py::class_<BSplineSmoother>(m, "BSplineSmoother")
         .def(py::init<const Eigen::Ref<const Eigen::VectorXd>&, const Eigen::Ref<const Eigen::VectorXd>&, py::object, int>())
         .def("compute_design", &BSplineSmoother::compute_design)
+        .def("update_weights", &BSplineSmoother::update_weights)
+        .def("fitted", &BSplineSmoother::fitted)
         .def("compute_penalty", &BSplineSmoother::compute_penalty)
         .def("compute_rhs", &BSplineSmoother::compute_rhs)
         .def("set_solution", &BSplineSmoother::set_solution)

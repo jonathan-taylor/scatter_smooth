@@ -131,6 +131,9 @@ Eigen::VectorXd ReinschSmoother::smooth(const Eigen::Ref<const Eigen::VectorXd>&
     Eigen::SparseMatrix<double> LHS = R_ + lamval * M_;
     Eigen::SimplicialLLT<Eigen::SparseMatrix<double>> solver;
     solver.compute(LHS);
+    if (solver.info() != Eigen::Success)
+        throw std::runtime_error("ReinschSmoother::smooth: the system is not positive definite "
+                                 "(too ill-conditioned; use fewer knots)");
     gamma_ = solver.solve(QT_y);
     f_ = y - lamval * weights_inv_.cwiseProduct(Q_ * gamma_);
     return f_;
@@ -151,7 +154,7 @@ double ReinschSmoother::gcv_score(double lamval, const Eigen::Ref<const Eigen::V
 
 double ReinschSmoother::solve_for_df(double target_df, double min_log_lam, double max_log_lam) {
     auto func = [&](double log_lam) { return compute_df(std::pow(10.0, log_lam)) - target_df; };
-    return std::pow(10.0, utils::brent_root(func, min_log_lam, max_log_lam));
+    return std::pow(10.0, utils::brent_root(func, min_log_lam, max_log_lam, 1e-11));
 }
 
 double ReinschSmoother::solve_gcv(const Eigen::Ref<const Eigen::VectorXd>& y, double min_log_lam, double max_log_lam) {

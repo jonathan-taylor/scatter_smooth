@@ -57,15 +57,22 @@ BSplineSmoother::BSplineSmoother(const Eigen::Ref<const Eigen::VectorXd>& x, con
     for(int i=0; i<order; ++i) knots_[n_a - order + i] = i_k[n_i - 1];
     n_basis_ = (int)(n_a - order);
     weights_ = w_obj.is_none() ? Eigen::VectorXd::Ones(x.size()) : w_obj.cast<Eigen::VectorXd>();
+    basis_at_x_.resize(order_, x_.size()); span_at_x_.resize(x_.size());
+    Eigen::VectorXd b_v(order_);
+    for (int i = 0; i < x_.size(); ++i) {
+        bspline::eval_bspline_basis(x_[i], order_, knots_, span_at_x_[i], b_v, 0);
+        basis_at_x_.col(i) = b_v;
+    }
     int kd = order - 1; AB_template_ = Eigen::MatrixXd::Zero(kd + 1, n_basis_); initialize_design();
     Omega_band_ = Eigen::MatrixXd::Zero(kd + 1, n_basis_); initialize_penalty();
 }
 
 void BSplineSmoother::initialize_design() {
-    Eigen::VectorXd b_v(order_); int s_i;
     int kd = order_ - 1;
+    AB_template_.setZero();
     for (int i = 0; i < x_.size(); ++i) {
-        bspline::eval_bspline_basis(x_[i], order_, knots_, s_i, b_v, 0);
+        int s_i = span_at_x_[i];
+        auto b_v = basis_at_x_.col(i);
         for (int r = 0; r < order_; ++r) {
             int rg = s_i + r; if (rg >= n_basis_) continue;
             for (int c = 0; c <= r; ++c) { 
@@ -94,6 +101,24 @@ void BSplineSmoother::initialize_penalty() {
             }
         }
     }
+}
+
+void BSplineSmoother::update_weights(const Eigen::Ref<const Eigen::VectorXd>& w) {
+    if (w.size() != x_.size()) throw std::runtime_error("update_weights: the weights have the wrong length");
+    weights_ = w;
+    initialize_design();
+}
+
+// the fitted spline at the data
+Eigen::VectorXd BSplineSmoother::fitted() {
+    if (coeffs_.size() != n_basis_) throw std::runtime_error("fitted: no fit yet (call smooth first)");
+    Eigen::VectorXd f(x_.size());
+    for (int i = 0; i < x_.size(); ++i) {
+        int s_i = span_at_x_[i]; double v = 0.0;
+        for (int j = 0; j < order_; ++j) { int idx = s_i + j; if (idx < n_basis_) v += coeffs_[idx] * basis_at_x_(j, i); }
+        f[i] = v;
+    }
+    return f;
 }
 
 Eigen::VectorXd BSplineSmoother::eval_basis(double x_val, int deriv) {
@@ -310,11 +335,11 @@ Eigen::MatrixXd BSplineSmoother::compute_penalty() {
 
 Eigen::VectorXd BSplineSmoother::compute_rhs(const Eigen::Ref<const Eigen::VectorXd>& y) {
     int n = n_basis_;
-    Eigen::VectorXd b = Eigen::VectorXd::Zero(n), b_v(order_); 
-    int s_i;
+    if (y.size() != x_.size()) throw std::runtime_error("compute_rhs: y has the wrong length");
+    Eigen::VectorXd b = Eigen::VectorXd::Zero(n);
     for(int i=0; i<x_.size(); ++i) {
-        bspline::eval_bspline_basis(x_[i], order_, knots_, s_i, b_v, 0);
-        for(int j=0; j<order_; ++j) { int idx = s_i + j; if(idx < n) b[idx] += weights_[i] * y[i] * b_v[j]; }
+        int s_i = span_at_x_[i];
+        for(int j=0; j<order_; ++j) { int idx = s_i + j; if(idx < n) b[idx] += weights_[i] * y[i] * basis_at_x_(j, i); }
     }
     apply_constraints(b);
     return b;

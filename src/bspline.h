@@ -12,6 +12,9 @@ namespace bspline {
 
 class BSplineSmoother {
     int order_; Eigen::VectorXd knots_, coeffs_, weights_, x_; int n_basis_; Eigen::MatrixXd AB_template_, Omega_band_;
+    // the basis at the data, computed once: the order_ nonzero values at x_[i]
+    // (column i) and the index of the first of them
+    Eigen::MatrixXd basis_at_x_; std::vector<int> span_at_x_;
     
     void get_boundary_weights(double& ws1, double& ws2, double& we1, double& we2);
     void apply_constraints(Eigen::MatrixXd& M);
@@ -20,6 +23,8 @@ class BSplineSmoother {
 public:
     BSplineSmoother(const Eigen::Ref<const Eigen::VectorXd>& x, const Eigen::Ref<const Eigen::VectorXd>& i_k, py::object w_obj, int order = 4);
     void initialize_design();
+    void update_weights(const Eigen::Ref<const Eigen::VectorXd>& w);
+    Eigen::VectorXd fitted();
     void initialize_penalty();
     Eigen::VectorXd eval_basis(double x_val, int deriv=0);
     Eigen::VectorXd get_knots();
