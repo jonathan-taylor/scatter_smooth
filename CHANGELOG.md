@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 (2026-10-20)
+
+This release changes default fits: with 50 or more distinct `x` values the knots are thinned as in R (`all_knots=True` keeps them all), GCV follows R's criterion, and LOESS fits change with tied `x` and for `span > 1`. Bad input now raises instead of crashing or giving silent nonsense. Python 3.10 or later is required.
 
 ### Changed
 - LOESS is faster: `x` is sorted once and each neighbourhood is a window of it (O(log n + k) to find, instead of all n distances and a partial sort per point), and the local normal equations come from moments. Predicting at the training points: 8× faster at span 0.1 and 2.7× at span 0.75 (n = 10,000); the fits are unchanged (to 1e-13). (#23)
@@ -15,9 +17,11 @@
 - `spline_coef_`, `set_spline_coef()` and `roughness()` on `SplineSmoother` (Reinsch and B-spline engines): the coefficients of the fitted spline, setting a fit from them, and the integral of its squared second derivative.
 - `BSplineSmoother.update_weights()` and `BSplineSmoother.fitted()` in the C++ extension.
 
+### Deprecated
+- `engine='natural'` is deprecated (`DeprecationWarning`): `engine='bspline'` fits the same natural cubic spline with banded solves. Its degrees of freedom, df targeting and GCV now come from the B-spline engine with the same knots: its dense df wasn't monotone at large lambda, so df targeting failed on ordinary data. (#20)
+
 ### Fixed
 - GCV (`solve_gcv`) uses R's `smooth.spline` criterion for every engine: weights normalized to mean 1, the residual sum of squares over all the observations (so with tied `x` it includes the sum of squares within the ties) and n the number of observations. With ties it chose df 11.78 where R chooses 11.64 (13.40 against 13.73 with weights); it now agrees with R to R's optimizer tolerance. The minimum is found on a grid refined by Brent's method. New `gcv_score(y, lamval)`. The natural engine's GCV used to ignore the weights. (#17)
-- `engine='natural'` is deprecated (`DeprecationWarning`): `engine='bspline'` fits the same natural cubic spline with banded solves. Its degrees of freedom, df targeting and GCV now come from the B-spline engine with the same knots: its dense df wasn't monotone at large lambda, so df targeting failed on ordinary data. (#20)
 - `df` targeting no longer fits a line silently with many unique `x` values: a non-finite degrees of freedom raises, `brent_root` rejects non-finite values, and the Reinsch solve checks its factorization. (#11)
 - The B-spline engine no longer reuses a stale Cholesky factor after `update_weights`. (#15)
 - `smooth(y, sample_weight=...)` goes through `update_weights`, so it is right with tied `x`. (#16)
@@ -40,8 +44,8 @@
 - `deriv`: splines accept 0–3 and the Reinsch engine now returns the true third derivative (was 0); the natural engine accepts 0–2; LOESS accepts 0 to its degree; anything else raises `ValueError`. (#21)
 
 ### Packaging
-- The version comes from `setuptools_scm` (the git tag, or PKG-INFO in an sdist), so building from the sdist gives the right version (it gave 0.0.0); development builds are `0.2.3.devN`, sorting before the release. `get_version.py` is removed. (#26)
-- Metadata: project URLs, the PEP 639 license fields (with Eigen's MPL-2.0 licence file in the wheel), an accurate description, `requires-python >= 3.10`, classifiers, a `test` extra, `__version__`, and pytest `testpaths`. (#32)
+- The version comes from `setuptools_scm` (the git tag, or PKG-INFO in an sdist), so building from the sdist gives the right version (it gave 0.0.0); development builds are `X.Y.Z.devN`, sorting before the release they lead to. `get_version.py` is removed. (#26)
+- Metadata: project URLs, the PEP 639 license fields (with Eigen's MPL-2.0 licence file in the wheel), an accurate description, `requires-python >= 3.10` (Python 3.9 is no longer supported), classifiers, a `test` extra, `__version__`, and pytest `testpaths`. (#32)
 - Eigen comes from the GitHub mirror (`eigen-mirror/eigen`, the same commit), meson falls back to `pybind11.get_include()`, and stale ignores and comments are gone. (#34)
 - README: `pip install scatter-smooth`, badges and the docs link; building from source with a recursive clone and meson-python. (#31)
 - CI: Python 3.10–3.14 on Linux, macOS and Windows, `fail-fast: false`, a concurrency group, read-only permissions and a pip cache; the package is installed normally and the tests run from an empty directory, so the installed package is tested; current action versions. (#29)
