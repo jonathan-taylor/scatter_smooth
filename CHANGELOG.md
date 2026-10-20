@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- The wheels workflow no longer publishes to PyPI: a tag builds the wheels and the sdist as artifacts, which are uploaded by hand with `twine`.
+
 ## 0.3.0 (2026-10-20)
 
 This release changes default fits: with 50 or more distinct `x` values the knots are thinned as in R (`all_knots=True` keeps them all), GCV follows R's criterion, and LOESS fits change with tied `x` and for `span > 1`. Bad input now raises instead of crashing or giving silent nonsense. Python 3.10 or later is required.
