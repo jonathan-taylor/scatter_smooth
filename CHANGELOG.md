@@ -4,6 +4,13 @@
 
 ### Docs
 - The docs workflow builds with Jupyter Book 2 on Python 3.12 (one install of `.[doc]`, R's `microbenchmark` for the comparisons) and deploys from `main` through GitHub Actions; the `tag_name` input, which the Pages environment refused, is removed. `docs/myst.yml` has the project's title and repository, the docs use only public APIs (`compare_cpp.md` compares the Reinsch and B-spline engines), and the `doc` extra requires `jupyter-book>=2` instead of `myst-parser`. (#30)
+### Fixed
+- `load_bikeshare()` no longer leaves a file open: it returns the CSV read into an `io.StringIO` (still readable by `pandas.read_csv`, and usable in a `with` block). (#25)
+- The build has no warnings: Eigen is included as a system header. (#25)
+
+### Changed
+- The bundled `bikeshare.csv` states its source and licence (the ISLR2 version of the UCI Bike Sharing data, Fanaee-T & Gama 2013, CC BY 4.0), in `scatter_smooth/data/README.md` and the `load_bikeshare` docstring. (#25)
+- Dead code removed: an empty `extern "C"` block, unused `<iostream>` includes, a dead branch of `SplineSmoother.N_` and a no-op weight assignment; `x_scaled_` is a declared field of `SplineSmoother`. Fits are unchanged. (#25)
 
 ## 0.3.0 (2026-10-20)
 

@@ -114,6 +114,7 @@ class SplineSmoother:
     # Scaling parameters
     x_min_: float = field(init=False, default=0.0)
     x_scale_: float = field(init=False, default=1.0)
+    x_scaled_: np.ndarray = field(init=False, default=None, repr=False)
     knots_scaled_: np.ndarray = field(init=False, default=None)
     n_k_: int = field(init=False, default=0)
 
@@ -165,15 +166,9 @@ class SplineSmoother:
         fitting and EDF calculation.
         """
         x = self.x
-        weights = self.w
         knots = self.knots
         n_knots = self.n_knots
-        
-        n = len(x)
-        if weights is None: 
-            weights = np.ones(n)
-            self.w = None # Keep as None internally if originally None, but handle locally if needed
-        
+
         if knots is None:
             if n_knots is not None:
                 percs = np.linspace(0, 100, n_knots)
@@ -591,14 +586,11 @@ class SplineSmoother:
              self._cpp_fitter.update_weights(self.w)
              self._df_helper.update_weights(self.w)
         
-    # Expose N and Omega if available (Natural Spline only usually)
+    # N and Omega, where the engine has them (N: the natural engine only)
     @property
     def N_(self):
         if hasattr(self._cpp_fitter, "get_N"):
             return self._cpp_fitter.get_N()
-        elif hasattr(self._cpp_fitter, "get_NTWN"):
-            # BSpline case, returns NTWN instead of N
-             return None 
         return None
 
     @property

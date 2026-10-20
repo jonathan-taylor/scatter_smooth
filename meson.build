@@ -7,7 +7,7 @@ project('scatter_smooth', 'cpp',
 py = import('python').find_installation(pure: false)
 
 # Eigen is vendored in src/eigen
-inc = include_directories('src/eigen')
+inc = include_directories('src/eigen', is_system: true)
 
 # Pybind11 dependency
 pybind11_dep = dependency('pybind11', required: false)

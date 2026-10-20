@@ -15,6 +15,3 @@ namespace utils {
     double trace_product_banded(const Eigen::MatrixXd& Z_banded, const Eigen::MatrixXd& B_banded);
     double trace_takahashi(const Eigen::MatrixXd& U_banded, const Eigen::MatrixXd& B_banded);
 }
-
-extern "C" {
-}

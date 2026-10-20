@@ -1,7 +1,6 @@
 #include "natural_spline.h"
 #include "utils.h"
 #include <stdexcept>
-#include <iostream>
 
 /**
  * Computes the Natural Cubic Spline basis matrix N.
