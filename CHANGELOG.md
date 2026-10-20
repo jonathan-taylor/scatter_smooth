@@ -28,3 +28,9 @@
   - LOESS `span` must be positive and finite, and `x` non-empty;
   - the caller's `knots` are no longer sorted in place.
 - `deriv`: splines accept 0–3 and the Reinsch engine now returns the true third derivative (was 0); the natural engine accepts 0–2; LOESS accepts 0 to its degree; anything else raises `ValueError`. (#21)
+
+### Packaging
+- The version comes from `setuptools_scm` (the git tag, or PKG-INFO in an sdist), so building from the sdist gives the right version (it gave 0.0.0); development builds are `0.2.3.devN`, sorting before the release. `get_version.py` is removed. (#26)
+- Metadata: project URLs, the PEP 639 license fields (with Eigen's MPL-2.0 licence file in the wheel), an accurate description, `requires-python >= 3.10`, classifiers, a `test` extra, `__version__`, and pytest `testpaths`. (#32)
+- Eigen comes from the GitHub mirror (`eigen-mirror/eigen`, the same commit), meson falls back to `pybind11.get_include()`, and stale ignores and comments are gone. (#34)
+- README: `pip install scatter-smooth`, badges and the docs link; building from source with a recursive clone and meson-python. (#31)

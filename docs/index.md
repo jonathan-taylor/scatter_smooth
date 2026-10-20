@@ -21,7 +21,7 @@ The core logic is implemented in C++ with Python bindings provided by `pybind11`
 *   **Smoothing Splines**: Similar to `smooth.spline` in R, offering multiple fitting engines:
     *   **Reinsch Algorithm**: $O(N)$ performance for when knots equal data points (matches R's `smooth.spline`).
     *   **Natural Spline Basis**: Explicit basis construction, suitable for regression splines ($K < N$).
-    *   **B-Spline Basis**: Efficient banded solver implementation using LAPACK.
+    *   **B-Spline Basis**: banded Cholesky solves (LAPACK, through SciPy), with the degrees of freedom from Takahashi's equations in C++.
 *   **LOESS**: A fast C++ implementation of locally estimated scatterplot smoothing (local polynomial regression).
 
 See the table of contents for more details on the theory and comparisons with other implementations.

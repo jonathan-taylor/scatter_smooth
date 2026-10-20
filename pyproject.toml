@@ -4,29 +4,47 @@ dynamic = ["version"]
 authors = [
   {name="Jonathan Taylor", email="jonathan.taylor@stanford.edu"},
 ]
-description = "Minimal Smoothing Spline Fitter. Provides an scikit-learn estimator"
+description = "Smoothing splines and LOESS scatterplot smoothers with a C++ (Eigen) core, compatible with R's smooth.spline and loess"
 readme = "README.md"
-requires-python = ">=3.9"
-keywords = ["statistical learning", "spline", "smoothing", "non-parametric"]
-license = {text = "BSD-3-Clause"}
+requires-python = ">=3.10"
+keywords = ["statistical learning", "spline", "smoothing", "non-parametric", "loess"]
+license = "BSD-3-Clause"
+license-files = ["LICENSE", "src/eigen/COPYING.MPL2"]
 classifiers = [
-    "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: BSD License",
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
     "Operating System :: OS Independent",
+    "Programming Language :: C++",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Mathematics",
 ]
 dependencies = [
     "numpy",
     "scipy"
 ]
 
+[project.urls]
+Homepage = "https://github.com/jonathan-taylor/scatter_smooth"
+Documentation = "https://jonathan-taylor.github.io/scatter_smooth/"
+Issues = "https://github.com/jonathan-taylor/scatter_smooth/issues"
+
 [project.optional-dependencies]
+test = [
+    "pytest",
+]
 dev = [
     "pytest",
-    "scipy",
     "ninja",
     "meson",
-    "meson-python",
-    "pybind11"
+    "meson-python>=0.18",
+    "pybind11",
+    "setuptools_scm>=8",
 ]
 doc = [
     "myst-parser",
@@ -37,8 +55,9 @@ doc = [
 ]
 
 [build-system]
-requires = ["meson-python>=0.13.1", "pybind11", "ninja", "patchelf; platform_system == 'Linux'", "setuptools_scm[toml]>=6.2"]
+# meson-python >= 0.18 for the PEP 639 license fields
+requires = ["meson-python>=0.18", "pybind11", "ninja", "patchelf; platform_system == 'Linux'", "setuptools_scm>=8"]
 build-backend = "mesonpy"
 
-[tool.setuptools_scm]
-write_to = "scatter_smooth/_version.py"
+[tool.pytest.ini_options]
+testpaths = ["tests"]
