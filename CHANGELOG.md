@@ -17,3 +17,13 @@
 - The B-spline engine no longer reuses a stale Cholesky factor after `update_weights`. (#15)
 - `smooth(y, sample_weight=...)` goes through `update_weights`, so it is right with tied `x`. (#16)
 - The B-spline engine's maximum df is the number of knots; a `df` outside `[2, n_knots]` raises `ValueError`; tied quantile knots (`n_knots` with tied `x`) are dropped. (#18)
+- `predict()` before `smooth()` raises `RuntimeError` instead of crashing, in Python and in every C++ class. (#12)
+- Every C++ entry point checks the lengths of `y`, the weights and banded matrices, raising `ValueError` instead of reading out of bounds. (#13)
+- Input validation (#14):
+  - `x`, `y` and the weights must be finite and 1-dimensional (an `(n, 1)` array is accepted), with matching lengths;
+  - a spline needs at least 4 distinct `x` values (and knots);
+  - weights must be non-negative, with at least one positive. Zero weights are allowed, as in R: the auto engine uses the B-spline engine when a unique `x` value has zero total weight, and the Reinsch engine raises;
+  - `lamval` must be non-negative; `df` and `lamval` can't both be given; `order` must be 4; `n_knots` must be at least 4;
+  - LOESS `span` must be positive and finite, and `x` non-empty;
+  - the caller's `knots` are no longer sorted in place.
+- `deriv`: splines accept 0–3 and the Reinsch engine now returns the true third derivative (was 0); the natural engine accepts 0–2; LOESS accepts 0 to its degree; anything else raises `ValueError`. (#21)

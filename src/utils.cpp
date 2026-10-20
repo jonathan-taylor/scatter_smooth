@@ -2,8 +2,15 @@
 #include <cmath>
 #include <algorithm>
 #include <stdexcept>
+#include <string>
 
 namespace utils {
+
+    void check_size(long size, long n, const char* what) {
+        if (size != n)
+            throw std::invalid_argument(std::string(what) + " has length " + std::to_string(size) +
+                                        ", expected " + std::to_string(n));
+    }
 
     double brent_root(std::function<double(double)> func, double a, double b, double tol, int max_iter) {
         double fa = func(a);
@@ -187,6 +194,8 @@ namespace utils {
     }
 
     double trace_takahashi(const Eigen::MatrixXd& U_banded, const Eigen::MatrixXd& B_banded) {
+        if (U_banded.rows() != B_banded.rows() || U_banded.cols() != B_banded.cols())
+            throw std::invalid_argument("trace_takahashi: U_banded and B_banded should have the same shape");
         Eigen::MatrixXd Z = takahashi_upper(U_banded);
         return trace_product_banded(Z, B_banded);
     }
