@@ -1,3 +1,4 @@
+import warnings
 from dataclasses import dataclass, field
 import numpy as np
 from scipy.linalg import (cholesky_banded,
@@ -153,6 +154,10 @@ class SplineSmoother:
             self.knots = knots
         if self.engine not in ('auto', 'reinsch', 'bspline', 'natural'):
             raise ValueError(f"Unknown engine: {self.engine}")
+        if self.engine == 'natural':
+            warnings.warn("engine='natural' is deprecated: engine='bspline' fits the same natural "
+                          "cubic spline with banded O(n) solves and accurate degrees of freedom",
+                          DeprecationWarning, stacklevel=3)
 
     def _setup_scaling_and_knots(self):
         """
@@ -243,6 +248,10 @@ class SplineSmoother:
         elif self.engine == 'natural':
             self._use_reinsch = False
             self._cpp_fitter = NaturalSplineSmoother(self.x_scaled_, self.knots_scaled_, self.w)
+            # the same model with the B-spline engine, for the degrees of
+            # freedom: the dense solve's df is inaccurate at large lambda
+            self._df_helper = SplineSmoother(self.x, w=self.w, knots=self.knots,
+                                             lamval=0., engine='bspline')
             
         else:
             raise ValueError(f"Unknown engine: {self.engine}")
@@ -269,6 +278,8 @@ class SplineSmoother:
         """
         if lamval is None:
             lamval = self.lamval
+        if self.engine == 'natural':
+            return self._df_helper.compute_df(lamval)
         
         lam_scaled = lamval / (self.x_scale_ ** 3)
         
@@ -312,6 +323,8 @@ class SplineSmoother:
         if not 2 <= target_df <= max_df:
             raise ValueError(f'df={target_df} is out of range: the degrees of freedom of a '
                              f'cubic smoothing spline with {max_df} knots are in [2, {max_df}]')
+        if self.engine == 'natural':
+            return self._df_helper._find_lamval_for_df(target_df, log10_lam_bounds)
         if target_df >= max_df - 0.01:
              return 1e-15 * (self.x_scale_ ** 3)
         if target_df <= 2.01:
@@ -341,34 +354,63 @@ class SplineSmoother:
              except RuntimeError as e:
                  raise RuntimeError(f"C++ solver failed: {e}")
 
-    def solve_gcv(self, y, sample_weight=None, log10_lam_bounds=(-20, 20)):
+    def gcv_score(self, y, lamval=None):
         """
-        Find optimal lambda using GCV and smooth the model using C++.
+        The generalized cross-validation criterion of R's `smooth.spline`,
+
+            (sum(w * (y - f)^2) / n) / (1 - df / n)^2,
+
+        with the weights normalized to mean 1 over the n observations of
+        positive weight, and the residual sum of squares over all the
+        observations (so with tied x it includes the sum of squares within
+        the ties).
+        """
+        if lamval is not None:
+            self.lamval = lamval
+        y = _as_vector(y, 'y', len(self.x))
+        w = self.w if self.w is not None else np.ones(len(y))
+        n = np.sum(w > 0)
+        w = w * n / w.sum()
+        f = self.smooth(y)
+        df = self.compute_df(self.lamval)
+        denom = 1 - df / n
+        if denom <= 0:
+            return np.inf
+        return (np.sum(w * (y - f)**2) / n) / denom**2
+
+    def solve_gcv(self, y, sample_weight=None, log10_lam_bounds=(-12, 8)):
+        """
+        Choose lambda by GCV (`gcv_score`, as R's `smooth.spline(cv=FALSE)`)
+        and smooth `y` with it: a grid over `log10_lam_bounds` (in the units
+        of x scaled to [0, 1], times the mean weight), refined around its
+        minimum by Brent's method. Returns lambda.
         """
         if sample_weight is not None:
             self.update_weights(sample_weight)
-        y_arr = np.asarray(y)
-        
-        if self.engine in ('reinsch', 'bspline'):
-             y_eff = self._aggregated_response(y_arr)
-        else:
-             y_eff = y_arr
-        
-        if hasattr(self._cpp_fitter, "solve_gcv"):
-             # Adjust bounds for C++ which works on scaled lambda
-             shift = 3 * np.log10(self.x_scale_)
-             min_log = log10_lam_bounds[0] - shift
-             max_log = log10_lam_bounds[1] - shift
-             
-             try:
-                 lam_scaled = self._cpp_fitter.solve_gcv(y_eff, min_log, max_log)
-                 self.lamval = lam_scaled * (self.x_scale_ ** 3)
-                 self.smooth(y)
-                 return self.lamval
-             except RuntimeError as e:
-                 raise RuntimeError(f"C++ GCV solver failed: {e}")
-                 
-        raise RuntimeError("C++ extension required for GCV optimization.")
+        y = _as_vector(y, 'y', len(self.x))
+        w = self.w if self.w is not None else np.ones(len(y))
+        # lambda in the units where x is in [0, 1] and the weights have mean 1
+        unit = self.x_scale_**3 * w.mean()
+
+        def crit(log_lam):
+            try:
+                return self.gcv_score(y, 10**log_lam * unit)
+            except (RuntimeError, ValueError):
+                return np.inf
+
+        grid = np.linspace(log10_lam_bounds[0], log10_lam_bounds[1], 81)
+        values = np.array([crit(g) for g in grid])
+        if not np.any(np.isfinite(values)):
+            raise RuntimeError('GCV: the criterion is not finite on the grid')
+        i = int(np.nanargmin(values))
+        lo, hi = grid[max(i - 1, 0)], grid[min(i + 1, len(grid) - 1)]
+        from scipy.optimize import minimize_scalar
+        res = minimize_scalar(crit, bounds=(lo, hi), method='bounded',
+                              options={'xatol': 1e-6})
+        best = res.x if res.fun <= values[i] else grid[i]
+        self.lamval = 10**best * unit
+        self.smooth(y)
+        return self.lamval
 
     def _aggregated_response(self, y):
         """The weighted means of `y` over the ties of `x` (0 where the weights sum to 0)."""
@@ -547,6 +589,7 @@ class SplineSmoother:
              self._NTWN = None
         else:
              self._cpp_fitter.update_weights(self.w)
+             self._df_helper.update_weights(self.w)
         
     # Expose N and Omega if available (Natural Spline only usually)
     @property

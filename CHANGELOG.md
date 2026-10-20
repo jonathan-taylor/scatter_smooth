@@ -13,6 +13,8 @@
 - `BSplineSmoother.update_weights()` and `BSplineSmoother.fitted()` in the C++ extension.
 
 ### Fixed
+- GCV (`solve_gcv`) uses R's `smooth.spline` criterion for every engine: weights normalized to mean 1, the residual sum of squares over all the observations (so with tied `x` it includes the sum of squares within the ties) and n the number of observations. With ties it chose df 11.78 where R chooses 11.64 (13.40 against 13.73 with weights); it now agrees with R to R's optimizer tolerance. The minimum is found on a grid refined by Brent's method. New `gcv_score(y, lamval)`. The natural engine's GCV used to ignore the weights. (#17)
+- `engine='natural'` is deprecated (`DeprecationWarning`): `engine='bspline'` fits the same natural cubic spline with banded solves. Its degrees of freedom, df targeting and GCV now come from the B-spline engine with the same knots: its dense df wasn't monotone at large lambda, so df targeting failed on ordinary data. (#20)
 - `df` targeting no longer fits a line silently with many unique `x` values: a non-finite degrees of freedom raises, `brent_root` rejects non-finite values, and the Reinsch solve checks its factorization. (#11)
 - The B-spline engine no longer reuses a stale Cholesky factor after `update_weights`. (#15)
 - `smooth(y, sample_weight=...)` goes through `update_weights`, so it is right with tied `x`. (#16)
