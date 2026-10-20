@@ -5,7 +5,6 @@
 #include <algorithm>
 #include <cmath>
 #include <vector>
-#include <iostream>
 
 LoessSmootherCpp::LoessSmootherCpp(const Eigen::Ref<const Eigen::VectorXd>& x, 
                                    py::object weights_obj, 
