@@ -61,3 +61,17 @@ build-backend = "mesonpy"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.cibuildwheel]
+# each wheel is installed and tested (from a temporary directory)
+test-requires = ["pytest"]
+test-command = "python -m pytest {project}/tests -x -q"
+# no free-threaded builds (the extension holds mutable fit state and doesn't
+# declare itself GIL-free), no 32-bit builds (no numpy/scipy wheels), and
+# no Python 3.10 on Windows ARM64 (numpy and scipy have wheels from 3.11)
+skip = ["cp3??t-*", "*-win32", "*-manylinux_i686", "*-musllinux_i686", "cp310-win_arm64"]
+
+[tool.cibuildwheel.windows]
+# build with MSVC: meson may otherwise pick a MinGW gcc on the PATH (which
+# can't link against an ARM64 Python, and whose runtime DLLs aren't shipped)
+config-settings = {setup-args = "--vsenv"}

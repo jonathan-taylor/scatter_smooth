@@ -9,7 +9,7 @@ the effective degrees of freedom in a smoothing spline.
 import numpy as np
 import pytest
 from scipy.linalg import cholesky_banded, inv
-from .takahashi_trace import (takahashi_upper,
+from _ref_takahashi_trace import (takahashi_upper,
                               trace_product_banded)
 from scatter_smooth._scatter_smooth_extension import trace_takahashi as trace_takahashi_cpp
 

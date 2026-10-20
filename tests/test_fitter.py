@@ -13,7 +13,7 @@ its functionality in various configurations. It includes:
 import numpy as np
 import pytest
 from scatter_smooth import SplineSmoother
-from tests.spline_fitter import SplineSmoother as SplineSmootherPy, compute_edf_reinsch
+from _ref_spline_fitter import SplineSmoother as SplineSmootherPy, compute_edf_reinsch
 
 # Setup for R comparison
 try:
