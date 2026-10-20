@@ -29,6 +29,11 @@
   - `lamval` must be non-negative; `df` and `lamval` can't both be given; `order` must be 4; `n_knots` must be at least 4;
   - LOESS `span` must be positive and finite, and `x` non-empty;
   - the caller's `knots` are no longer sorted in place.
+- LOESS with tied `x` (#19):
+  - the neighbourhood holds every point tied at the boundary distance;
+  - when it holds fewer distinct `x` values than the degree needs, the local polynomial drops its highest powers (one distinct value gives the weighted mean) instead of returning NaN (degree 1) or garbage (degree 2);
+  - when every neighbour sits at the boundary distance (zero tricube weight), they get equal weights, the limit of a slightly larger bandwidth;
+  - `span > 1` widens the bandwidth to `sqrt(span)` times the largest distance, as R does (was the same fit as `span = 1`).
 - `deriv`: splines accept 0–3 and the Reinsch engine now returns the true third derivative (was 0); the natural engine accepts 0–2; LOESS accepts 0 to its degree; anything else raises `ValueError`. (#21)
 
 ### Packaging

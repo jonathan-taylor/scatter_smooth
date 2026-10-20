@@ -1,6 +1,7 @@
 #include "loess.h"
 #include "utils.h"
 #include <stdexcept>
+#include <limits>
 #include <algorithm>
 #include <cmath>
 #include <vector>
@@ -33,12 +34,27 @@ void LoessSmootherCpp::update_weights(py::object weights_obj) {
     }
 }
 
-long factorial(int n) {
-    long res = 1;
-    for (int i = 2; i <= n; ++i) res *= i;
-    return res;
+namespace {
+    long factorial(int n) {
+        long res = 1;
+        for (int i = 2; i <= n; ++i) res *= i;
+        return res;
+    }
 }
 
+/**
+ * The local fit at each point: weighted least squares of y on the powers
+ * (x - val) / h, 0..degree, with tricube weights in |x - val| / h, h the
+ * distance to the k-th nearest neighbour (k = ceil(span * n); points tied at
+ * that distance are all in the neighbourhood); for span > 1
+ * all points, with h sqrt(span) times the largest distance (R's rule).
+ *
+ * The normal equations are solved with columns scaled to unit norm, by a
+ * pseudo-inverse when they are (nearly) singular: with tied x, the
+ * neighbourhood can hold fewer distinct values than the degree needs (e.g.
+ * all the points at the boundary distance, of weight 0), and the fit is then
+ * that of the lower-degree terms, as R's loess.
+ */
 Eigen::VectorXd LoessSmootherCpp::predict(const Eigen::Ref<const Eigen::VectorXd>& x_new, int deriv) {
     if (y_.size() != n_) throw std::runtime_error("predict: the smoother is not fitted yet (call smooth first)");
     if (deriv < 0 || deriv > degree_)
@@ -46,176 +62,85 @@ Eigen::VectorXd LoessSmootherCpp::predict(const Eigen::Ref<const Eigen::VectorXd
     int n_new = x_new.size();
     Eigen::VectorXd y_pred(n_new);
 
-    int k = static_cast<int>(std::ceil(span_ * n_));
+    int k = static_cast<int>(std::ceil(std::min(span_, 1.0) * n_));
     if (k < degree_ + 1) k = degree_ + 1;
     if (k > n_) k = n_;
+    double widen = (span_ > 1.0) ? std::sqrt(span_) : 1.0;
 
+    const int p = degree_ + 1;
     std::vector<Neighbor> neighbors(n_);
     long fact_deriv = factorial(deriv);
+    Eigen::MatrixXd A(p, p);
+    Eigen::VectorXd b(p), powers(p);
 
     for (int i = 0; i < n_new; ++i) {
         double val = x_new(i);
 
-        // 1. Compute distances
         for (int j = 0; j < n_; ++j) {
             neighbors[j] = {j, std::abs(x_(j) - val)};
         }
-
-        // 2. Find k nearest neighbors (partial sort)
         std::nth_element(neighbors.begin(), neighbors.begin() + k - 1, neighbors.end(),
                          [](const Neighbor& a, const Neighbor& b) {
                              return a.dist < b.dist;
                          });
-
         double max_dist = 0;
         for (int j = 0; j < k; ++j) {
             if (neighbors[j].dist > max_dist) max_dist = neighbors[j].dist;
         }
+        // the neighbourhood holds every point tied at the boundary distance,
+        // so that it doesn't depend on the order of the data
+        int k_i = static_cast<int>(std::partition(neighbors.begin() + k, neighbors.end(),
+                                                  [max_dist](const Neighbor& a) {
+                                                      return a.dist <= max_dist;
+                                                  }) - neighbors.begin());
+        double h = max_dist * widen;
+        // all the neighbours at val: they all get weight 1, and the scale is moot
+        double scale = (h > 0) ? h : 1.0;
 
-        // 3. Optimized Local Weighted Least Squares for common degrees (0, 1, 2)
-        // Solves the Normal Equations: (X^T W X) beta = X^T W y
-        // Avoids heap allocation for X and generic QR decomposition
-        
-        bool solved = false;
-
-        if (degree_ == 0) {
-            double sum_w = 0, sum_wy = 0;
-            for (int j = 0; j < k; ++j) {
+        // pass 0: tricube weights. If they are all 0 (every neighbour, tied, at
+        // the boundary distance h), pass 1: the limit of a bandwidth just
+        // above h, in which the neighbours at h get equal weights.
+        for (int pass = 0; pass < 2; ++pass) {
+            A.setZero(); b.setZero();
+            for (int j = 0; j < k_i; ++j) {
                 int idx = neighbors[j].index;
-                double u = (max_dist > 1e-14) ? neighbors[j].dist / max_dist : 0.0;
-                double tri_w = std::pow(std::max(0.0, 1.0 - std::pow(u, 3)), 3);
-                double w_total = tri_w * w_(idx);
-                sum_w += w_total;
-                sum_wy += w_total * y_(idx);
-            }
-            if (sum_w < 1e-14) y_pred(i) = std::numeric_limits<double>::quiet_NaN();
-            else y_pred(i) = (deriv == 0) ? sum_wy / sum_w : 0.0;
-            solved = true;
-        } 
-        else if (degree_ == 1) {
-            double s0 = 0, s1 = 0, s2 = 0;
-            double t0 = 0, t1 = 0;
-            for (int j = 0; j < k; ++j) {
-                int idx = neighbors[j].index;
-                double u = (max_dist > 1e-14) ? neighbors[j].dist / max_dist : 0.0;
-                double tri_w = std::pow(std::max(0.0, 1.0 - std::pow(u, 3)), 3);
+                double u = (h > 0) ? neighbors[j].dist / h : 0.0;
+                double tri_w = (u < 1.0) ? std::pow(1.0 - u * u * u, 3) : 0.0;
+                if (pass == 1) tri_w = (neighbors[j].dist >= max_dist) ? 1.0 : 0.0;
                 double w = tri_w * w_(idx);
-                
-                double diff = x_(idx) - val;
-                s0 += w;
-                s1 += w * diff;
-                s2 += w * diff * diff;
-                t0 += w * y_(idx);
-                t1 += w * diff * y_(idx);
+                if (w <= 0) continue;
+                double z = (x_(idx) - val) / scale, pw = 1.0;
+                for (int d = 0; d < p; ++d) { powers(d) = pw; pw *= z; }
+                A.noalias() += w * powers * powers.transpose();
+                b.noalias() += (w * y_(idx)) * powers;
             }
-            
-            // Determinant of 2x2 matrix [[s0, s1], [s1, s2]]
-            double det = s0 * s2 - s1 * s1;
-            
-            if (std::abs(det) < 1e-14 || s0 < 1e-14) {
-                 y_pred(i) = std::numeric_limits<double>::quiet_NaN();
-            } else {
-                 if (deriv == 0) {
-                     // beta0
-                     y_pred(i) = (s2 * t0 - s1 * t1) / det;
-                 } else if (deriv == 1) {
-                     // beta1 * 1!
-                     y_pred(i) = (s0 * t1 - s1 * t0) / det;
-                 } else {
-                     y_pred(i) = 0.0;
-                 }
-            }
-            solved = true;
+            if (A(0, 0) > 0 || widen > 1.0) break;
         }
-        else if (degree_ == 2) {
-             // 3x3 System
-             Eigen::Matrix3d A; A.setZero();
-             Eigen::Vector3d b; b.setZero();
-             
-             for (int j = 0; j < k; ++j) {
-                 int idx = neighbors[j].index;
-                 double u = (max_dist > 1e-14) ? neighbors[j].dist / max_dist : 0.0;
-                 double tri_w = std::pow(std::max(0.0, 1.0 - std::pow(u, 3)), 3);
-                 double w = tri_w * w_(idx);
-
-                 double diff = x_(idx) - val;
-                 double diff2 = diff * diff;
-                 
-                 // Symmetric A accumulation
-                 A(0,0) += w; 
-                 double wd = w * diff;
-                 A(0,1) += wd; 
-                 double wd2 = w * diff2;
-                 A(0,2) += wd2; // A(1,1) is also sum(w d^2)
-                 
-                 double wd3 = wd2 * diff;
-                 A(1,2) += wd3; 
-                 
-                 double wd4 = wd3 * diff;
-                 A(2,2) += wd4;
-                 
-                 double wy = w * y_(idx);
-                 b(0) += wy;
-                 b(1) += wy * diff;
-                 b(2) += wy * diff2;
-             }
-             // Fill symmetric parts
-             A(1,0) = A(0,1);
-             A(1,1) = A(0,2);
-             A(2,0) = A(0,2);
-             A(2,1) = A(1,2);
-             
-             // Solve A x = b using LDLT
-             Eigen::LDLT<Eigen::Matrix3d> solver;
-             solver.compute(A);
-             if (solver.info() != Eigen::Success) {
-                 y_pred(i) = std::numeric_limits<double>::quiet_NaN();
-             } else {
-                 Eigen::Vector3d beta = solver.solve(b);
-                 if (deriv == 0) y_pred(i) = beta(0);
-                 else if (deriv == 1) y_pred(i) = beta(1);
-                 else if (deriv == 2) y_pred(i) = beta(2) * 2.0; // 2!
-                 else y_pred(i) = 0.0;
-             }
-             solved = true;
+        if (A(0, 0) <= 0) {
+            // no weight at all in the neighbourhood
+            y_pred(i) = std::numeric_limits<double>::quiet_NaN();
+            continue;
         }
 
-        if (!solved) {
-            // General Fallback for degree >= 3 using QR decomposition
-            Eigen::VectorXd local_w(k);
-            Eigen::MatrixXd X(k, degree_ + 1);
-            Eigen::VectorXd local_y(k);
-
-            for (int j = 0; j < k; ++j) {
-                int idx = neighbors[j].index;
-                double u = (max_dist > 1e-14) ? neighbors[j].dist / max_dist : 0.0;
-                double tri_w = std::pow(std::max(0.0, 1.0 - std::pow(u, 3)), 3);
-                double total_w = tri_w * w_(idx);
-                
-                double sqrt_w = std::sqrt(total_w);
-                local_w(j) = total_w;
-
-                double diff = x_(idx) - val;
-                double p = 1.0;
-                for (int d = 0; d <= degree_; ++d) {
-                    X(j, d) = p * sqrt_w;
-                    p *= diff;
-                }
-                local_y(j) = y_(idx) * sqrt_w;
-            }
-            
-            if (local_w.sum() < 1e-14) {
-                 y_pred(i) = std::numeric_limits<double>::quiet_NaN();
-                 continue;
-            }
-
-            Eigen::VectorXd beta = X.colPivHouseholderQr().solve(local_y);
-            if (deriv <= degree_) {
-                y_pred(i) = beta(deriv) * fact_deriv;
-            } else {
-                y_pred(i) = 0.0;
-            }
-        }
+        // unit column norms (of the weighted design); with fewer distinct x
+        // values in the neighbourhood than the degree needs, the local
+        // polynomial drops its highest powers (to the rank of the system):
+        // e.g. the weighted mean when they are all at one x value
+        Eigen::VectorXd cn = A.diagonal().cwiseSqrt();
+        for (int d = 0; d < p; ++d) if (cn(d) <= 0) cn(d) = 1.0;
+        Eigen::MatrixXd An = cn.cwiseInverse().asDiagonal() * A * cn.cwiseInverse().asDiagonal();
+        Eigen::VectorXd bn = b.cwiseQuotient(cn);
+        Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eig(An, Eigen::EigenvaluesOnly);
+        Eigen::VectorXd ev = eig.eigenvalues();
+        double tol = ev.maxCoeff() * 1e-12;
+        int rank = 0;
+        for (int d = 0; d < p; ++d) if (ev(d) > tol) ++rank;
+        if (rank < 1) rank = 1;
+        Eigen::VectorXd coef = Eigen::VectorXd::Zero(p);
+        coef.head(rank) = An.topLeftCorner(rank, rank).ldlt().solve(bn.head(rank));
+        Eigen::VectorXd beta = coef.cwiseQuotient(cn);
+        // beta(d) is the coefficient of ((x - val) / scale)^d
+        y_pred(i) = beta(deriv) * fact_deriv / std::pow(scale, deriv);
     }
 
     return y_pred;
