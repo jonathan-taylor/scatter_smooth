@@ -8,42 +8,46 @@
 
 namespace py = pybind11;
 
+// The long computations release the GIL (call_guard), so other Python
+// threads run meanwhile. A smoother object holds its fit: don't use one
+// object from several threads at once.
 PYBIND11_MODULE(_scatter_smooth_extension, m) {
-    m.def("trace_takahashi", &utils::trace_takahashi, py::arg("U_banded"), py::arg("B_banded"));
+    m.def("trace_takahashi", &utils::trace_takahashi, py::arg("U_banded"), py::arg("B_banded"), py::call_guard<py::gil_scoped_release>());
     m.def("takahashi_upper", &utils::takahashi_upper, py::arg("U_banded"));
     m.def("trace_product_banded", &utils::trace_product_banded, py::arg("Z_banded"), py::arg("B_banded"));
 
     py::class_<LoessSmootherCpp>(m, "LoessSmootherCpp")
         .def(py::init<const Eigen::Ref<const Eigen::VectorXd>&, py::object, double, int>(),
              py::arg("x"), py::arg("weights_obj") = py::none(), py::arg("span") = 0.75, py::arg("degree") = 1)
-        .def("set_y", &LoessSmootherCpp::set_y)
+        .def("set_y", &LoessSmootherCpp::set_y, py::call_guard<py::gil_scoped_release>())
         .def("update_weights", &LoessSmootherCpp::update_weights)
-        .def("predict", &LoessSmootherCpp::predict, py::arg("x_new"), py::arg("deriv") = 0);
+        .def("predict", &LoessSmootherCpp::predict, py::arg("x_new"), py::arg("deriv") = 0, py::call_guard<py::gil_scoped_release>())
+        .def("leverage", &LoessSmootherCpp::leverage, py::call_guard<py::gil_scoped_release>());
 
     py::class_<NaturalSplineSmoother>(m, "NaturalSplineSmoother")
         .def(py::init<const Eigen::Ref<const Eigen::VectorXd>&, const Eigen::Ref<const Eigen::VectorXd>&, py::object>(),
              py::arg("x"), py::arg("knots"), py::arg("weights_obj") = py::none())
-        .def("smooth", &NaturalSplineSmoother::smooth)
+        .def("smooth", &NaturalSplineSmoother::smooth, py::call_guard<py::gil_scoped_release>())
         .def("update_weights", &NaturalSplineSmoother::update_weights)
-        .def("compute_df", &NaturalSplineSmoother::compute_df)
+        .def("compute_df", &NaturalSplineSmoother::compute_df, py::call_guard<py::gil_scoped_release>())
         .def("gcv_score", &NaturalSplineSmoother::gcv_score)
         .def("solve_for_df", &NaturalSplineSmoother::solve_for_df, py::arg("target_df"), py::arg("min_log_lam") = -12.0, py::arg("max_log_lam") = 12.0)
         .def("solve_gcv", &NaturalSplineSmoother::solve_gcv, py::arg("y"), py::arg("min_log_lam") = -12.0, py::arg("max_log_lam") = 12.0)
-        .def("predict", &NaturalSplineSmoother::predict)
+        .def("predict", &NaturalSplineSmoother::predict, py::call_guard<py::gil_scoped_release>())
         .def("get_N", &NaturalSplineSmoother::get_N)
         .def("get_Omega", &NaturalSplineSmoother::get_Omega);
 
     py::class_<ReinschSmoother>(m, "ReinschSmoother")
         .def(py::init<const Eigen::Ref<const Eigen::VectorXd>&, py::object>(),
              py::arg("x"), py::arg("weights") = py::none())
-        .def("smooth", &ReinschSmoother::smooth)
+        .def("smooth", &ReinschSmoother::smooth, py::call_guard<py::gil_scoped_release>())
         .def("update_weights", &ReinschSmoother::update_weights)
-        .def("compute_df", &ReinschSmoother::compute_df)
+        .def("compute_df", &ReinschSmoother::compute_df, py::call_guard<py::gil_scoped_release>())
         .def("compute_df_sparse", &ReinschSmoother::compute_df_sparse)
         .def("gcv_score", &ReinschSmoother::gcv_score)
-        .def("solve_for_df", &ReinschSmoother::solve_for_df, py::arg("target_df"), py::arg("min_log_lam") = -12.0, py::arg("max_log_lam") = 12.0)
+        .def("solve_for_df", &ReinschSmoother::solve_for_df, py::arg("target_df"), py::arg("min_log_lam") = -12.0, py::arg("max_log_lam") = 12.0, py::call_guard<py::gil_scoped_release>())
         .def("solve_gcv", &ReinschSmoother::solve_gcv, py::arg("y"), py::arg("min_log_lam") = -12.0, py::arg("max_log_lam") = 12.0)
-        .def("predict", &ReinschSmoother::predict);
+        .def("predict", &ReinschSmoother::predict, py::call_guard<py::gil_scoped_release>());
 
     py::class_<CubicSplineTraceCpp>(m, "CubicSplineTraceCpp")
         .def(py::init<const Eigen::Ref<const Eigen::VectorXd>&, py::object>(),
@@ -53,17 +57,17 @@ PYBIND11_MODULE(_scatter_smooth_extension, m) {
     py::class_<BSplineSmoother>(m, "BSplineSmoother")
         .def(py::init<const Eigen::Ref<const Eigen::VectorXd>&, const Eigen::Ref<const Eigen::VectorXd>&, py::object, int>())
         .def("compute_design", &BSplineSmoother::compute_design)
-        .def("update_weights", &BSplineSmoother::update_weights)
-        .def("fitted", &BSplineSmoother::fitted)
+        .def("update_weights", &BSplineSmoother::update_weights, py::call_guard<py::gil_scoped_release>())
+        .def("fitted", &BSplineSmoother::fitted, py::call_guard<py::gil_scoped_release>())
         .def("compute_penalty", &BSplineSmoother::compute_penalty)
-        .def("compute_rhs", &BSplineSmoother::compute_rhs)
+        .def("compute_rhs", &BSplineSmoother::compute_rhs, py::call_guard<py::gil_scoped_release>())
         .def("set_solution", &BSplineSmoother::set_solution)
-        .def("smooth", &BSplineSmoother::smooth)
+        .def("smooth", &BSplineSmoother::smooth, py::call_guard<py::gil_scoped_release>())
         .def("compute_df", &BSplineSmoother::compute_df)
         .def("gcv_score", &BSplineSmoother::gcv_score)
         .def("solve_for_df", &BSplineSmoother::solve_for_df, py::arg("target_df"), py::arg("min_log_lam") = -12.0, py::arg("max_log_lam") = 12.0)
         .def("solve_gcv", &BSplineSmoother::solve_gcv, py::arg("y"), py::arg("min_log_lam") = -12.0, py::arg("max_log_lam") = 12.0)
-        .def("predict", &BSplineSmoother::predict)
+        .def("predict", &BSplineSmoother::predict, py::call_guard<py::gil_scoped_release>())
         .def("get_NTWN", &BSplineSmoother::get_NTWN)
         .def("get_Omega", &BSplineSmoother::get_Omega)
         .def("get_knots", &BSplineSmoother::get_knots)

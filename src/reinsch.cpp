@@ -33,17 +33,16 @@ void CubicSplineTraceCpp::compute_QR_bands() {
     M_off2 = (inv_h_j_plus_1.head(n_inner - 2).array() * inv_h_j.tail(n_inner - 2).array() * weights_inv_.segment(2, n_inner - 2).array());
 }
 
-CubicSplineTraceCpp::CubicSplineTraceCpp(const Eigen::Ref<const Eigen::VectorXd>& x, py::object weights_obj) {
+CubicSplineTraceCpp::CubicSplineTraceCpp(const Eigen::Ref<const Eigen::VectorXd>& x, py::object weights_obj)
+    : CubicSplineTraceCpp(x, weights_obj.is_none() ? Eigen::VectorXd(Eigen::VectorXd::Ones(x.size()))
+                                                   : weights_obj.cast<Eigen::VectorXd>()) {}
+
+CubicSplineTraceCpp::CubicSplineTraceCpp(const Eigen::Ref<const Eigen::VectorXd>& x, const Eigen::VectorXd& weights) {
     if (x.size() < 4) throw std::invalid_argument("a cubic smoothing spline needs at least 4 knots");
     x_ = x; n_ = x.size(); h_.resize(n_ - 1);
     for (int i = 0; i < n_ - 1; ++i) h_(i) = x_(i + 1) - x_(i);
-    weights_inv_.resize(n_);
-    if (weights_obj.is_none()) weights_inv_.setOnes();
-    else {
-        Eigen::VectorXd w = weights_obj.cast<Eigen::VectorXd>();
-        utils::check_size(w.size(), n_, "weights");
-        weights_inv_ = w.cwiseInverse();
-    }
+    utils::check_size(weights.size(), n_, "weights");
+    weights_inv_ = weights.cwiseInverse();
     compute_QR_bands();
 }
 
@@ -155,7 +154,7 @@ Eigen::VectorXd ReinschSmoother::smooth(const Eigen::Ref<const Eigen::VectorXd>&
 
 double ReinschSmoother::compute_df(double lamval) {
     Eigen::VectorXd original_weights = weights_inv_.cwiseInverse();
-    CubicSplineTraceCpp trace_solver(x_, py::cast(original_weights));
+    CubicSplineTraceCpp trace_solver(x_, original_weights);
     return trace_solver.compute_trace(lamval);
 }
 
