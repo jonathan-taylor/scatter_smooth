@@ -1,6 +1,5 @@
 #include "bspline.h"
 #include "utils.h"
-#include <iostream>
 #include <cmath>
 #include <algorithm>
 #include <stdexcept>

@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- `load_bikeshare()` no longer leaves a file open: it returns the CSV read into an `io.StringIO` (still readable by `pandas.read_csv`, and usable in a `with` block). (#25)
+- The build has no warnings: Eigen is included as a system header. (#25)
+
+### Changed
+- The bundled `bikeshare.csv` states its source and licence (the ISLR2 version of the UCI Bike Sharing data, Fanaee-T & Gama 2013, CC BY 4.0), in `scatter_smooth/data/README.md` and the `load_bikeshare` docstring. (#25)
+- Dead code removed: an empty `extern "C"` block, unused `<iostream>` includes, a dead branch of `SplineSmoother.N_` and a no-op weight assignment; `x_scaled_` is a declared field of `SplineSmoother`. Fits are unchanged. (#25)
+
 ## 0.3.0 (2026-10-20)
 
 This release changes default fits: with 50 or more distinct `x` values the knots are thinned as in R (`all_knots=True` keeps them all), GCV follows R's criterion, and LOESS fits change with tied `x` and for `span > 1`. Bad input now raises instead of crashing or giving silent nonsense. Python 3.10 or later is required.
