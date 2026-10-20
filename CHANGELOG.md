@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Docs
+- The docs workflow builds with Jupyter Book 2 on Python 3.12 (one install of `.[doc]`, R's `microbenchmark` for the comparisons) and deploys from `main` through GitHub Actions; the `tag_name` input, which the Pages environment refused, is removed. `docs/myst.yml` has the project's title and repository, the docs use only public APIs (`compare_cpp.md` compares the Reinsch and B-spline engines), and the `doc` extra requires `jupyter-book>=2` instead of `myst-parser`. (#30)
+
 ## 0.3.0 (2026-10-20)
 
 This release changes default fits: with 50 or more distinct `x` values the knots are thinned as in R (`all_knots=True` keeps them all), GCV follows R's criterion, and LOESS fits change with tied `x` and for `span > 1`. Bad input now raises instead of crashing or giving silent nonsense. Python 3.10 or later is required.

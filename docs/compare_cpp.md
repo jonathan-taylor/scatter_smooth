@@ -12,9 +12,9 @@ kernelspec:
   language: python
 ---
 
-# Performance Comparison: Pure Python vs C++ Extension
+# Performance of the Engines
 
-This document compares the computational performance of the pure Python implementation (`SplineSmootherPy`) and the C++ optimized implementation (`SplineSmoother`) of the smoothing spline fitter.
+This document compares the computational performance of the C++ engines of `SplineSmoother`: the Reinsch algorithm (`engine='reinsch'`, all the unique $x$ values as knots, O(N)) and the B-spline basis (`engine='bspline'`, any knots). The pure Python reference implementation that the tests compare against lives in `tests/_ref_spline_fitter.py`.
 
 ## Setup
 
@@ -22,82 +22,46 @@ This document compares the computational performance of the pure Python implemen
 import numpy as np
 import matplotlib.pyplot as plt
 import time
-import sys
-import os
-
-# the pure Python reference implementation lives with the tests
-sys.path.append(os.path.abspath(os.path.join('..', 'tests')))
 
 from scatter_smooth import SplineSmoother
-try:
-    from _ref_spline_fitter import SplineSmoother as SplineSmootherPy
-except ImportError:
-    print("Could not import pure Python SplineSmoother from tests.")
-    SplineSmootherPy = None
 ```
 
 ## Speed Comparison at Different Scales
 
-We will measure the time taken to fit the smoothing spline for different numbers of observations ($N$) and different numbers of knots ($K$). We will explicitly test the **Natural Spline** engine (basis form) and the **Reinsch** engine (when applicable) and the **B-Spline** engine.
+We will measure the time taken to fit the smoothing spline for different numbers of observations ($N$) and different numbers of knots ($K$).
 
 ```{code-cell} ipython3
-def benchmark_fitters(ns, n_knots=None, engine='reinsch', python=True):
-    results = {'py': [], 'cpp': []}
-    
+def benchmark(ns, engine, **knots):
+    times = []
     for n in ns:
         rng = np.random.default_rng(0)
         x = np.sort(rng.uniform(0, 10, n))
         y = np.sin(x) + rng.normal(0, 0.1, n)
-        
-        # Pure Python (always basis form natural spline)
-        if python:
-            start = time.time()
-            fitter_py = SplineSmootherPy(x, n_knots=n_knots, df=10)
-            fitter_py.smooth(y)
-            results['py'].append(time.time() - start)
-
-        try:
-            start = time.time()
-            # Explicitly request engine
-            fitter_cpp = SplineSmoother(x, df=10, n_knots=n_knots, engine=engine)
-            fitter_cpp.smooth(y)
-            results['cpp'].append(time.time() - start)
-        except ValueError:
-            # Engine might not be compatible (e.g. reinsch with reduced knots)
-            results['cpp'].append(np.nan)
-            
-    return results
+        start = time.time()
+        fitter = SplineSmoother(x, df=10, engine=engine, **knots)
+        fitter.smooth(y)
+        times.append(time.time() - start)
+    return times
 
 # Sizes to test
-ns = [100, 500, 1000, 2000, 5000][:4]
+ns = [100, 500, 1000, 2000, 5000]
 ```
 
 ### 1. All Unique X as Knots (K = N)
 
-When $N$ is small, using all unique $x$ values as knots is feasible. 
+With `all_knots=True` every unique $x$ value is a knot, which is feasible for moderate $N$.
 We compare:
-1. Pure Python (Natural Spline Basis)
-2. C++ `engine='natural'` (Natural Spline Basis)
-3. C++ `engine='reinsch'` (Reinsch Algorithm - O(N))
-4. C++ `engine='bspline'` (B-Spline Basis)
-5. C++ `engine='auto'` (Default Selection)
+1. `engine='reinsch'` (Reinsch Algorithm - O(N))
+2. `engine='bspline'` (B-Spline Basis)
 
 ```{code-cell} ipython3
 print(f"Benchmarking with ns={ns} (All Knots)...")
-results_natural = benchmark_fitters(ns, engine='natural')
-results_py = results_natural['py']
-results_natural = results_natural['cpp']
-results_reinsch = benchmark_fitters(ns, engine='reinsch', python=False)['cpp']
-results_bspline = benchmark_fitters(ns, engine='bspline', python=False)['cpp']
-results_auto = benchmark_fitters(ns, engine='auto', python=False)['cpp']
+results_reinsch = benchmark(ns, 'reinsch', all_knots=True)
+results_bspline = benchmark(ns, 'bspline', all_knots=True)
 
 fig, ax = plt.subplots(figsize=(10, 6))
-if SplineSmootherPy:
-    ax.plot(ns, results_py, 'o-', label='Pure Python')
-ax.plot(ns, results_natural, 's-', label="C++ 'natural'")
-ax.plot(ns, results_reinsch, '^-', label="C++ 'reinsch'")
-ax.plot(ns, results_bspline, 'd-', label="C++ 'bspline'")
-ax.plot(ns, results_auto, 'x--', label="C++ 'auto'")
+ax.plot(ns, results_reinsch, '^-', label="'reinsch'")
+ax.plot(ns, results_bspline, 'd-', label="'bspline'")
 
 ax.set_xlabel('Number of observations (N)')
 ax.set_ylabel('Time (seconds)')
@@ -116,12 +80,12 @@ In practice, for large $N$, we often limit the number of knots to a fixed $K \ll
 ns_large = [100, 500, 1000, 1500, 2000, 5000, 10000, 20000, 30000, 50000]
 K = 200
 print(f"Benchmarking with large N and K={K}...")
-results_fixed_bspline = benchmark_fitters(ns_large, n_knots=K, engine='bspline', python=False)['cpp']
+results_fixed_bspline = benchmark(ns_large, 'bspline', n_knots=K)
 ```
 
 ```{code-cell} ipython3
 fig, ax = plt.subplots(figsize=(10, 6))
-ax.plot(ns_large, results_fixed_bspline, 'd-', label=f"C++ 'bspline' (K={K})")
+ax.plot(ns_large, results_fixed_bspline, 'd-', label=f"'bspline' (K={K})")
 
 ax.set_xlabel('Number of observations (N)')
 ax.set_ylabel('Time (seconds)')
@@ -158,4 +122,4 @@ best_lam = fitter.solve_gcv(y)
 
 ## Conclusion
 
-The C++ extension provides significant speedups, especially as the number of knots or observations increases. This is due to the efficient matrix operations and optimized algorithms implemented in C++ using the Eigen library.
+With all the unique $x$ values as knots, the Reinsch engine is O(N). With a fixed number of knots $K \ll N$, the B-spline engine's cost grows slowly with $N$: the banded system is of size $K$.
