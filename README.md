@@ -1,5 +1,9 @@
 # Scatterplot Smoothers
 
+[![Tests](https://github.com/jonathan-taylor/scatter_smooth/actions/workflows/tests.yml/badge.svg)](https://github.com/jonathan-taylor/scatter_smooth/actions/workflows/tests.yml)
+[![PyPI](https://img.shields.io/pypi/v/scatter-smooth.svg)](https://pypi.org/project/scatter-smooth/)
+[![Docs](https://img.shields.io/badge/docs-online-blue.svg)](https://jonathan-taylor.github.io/scatter_smooth/)
+
 This repository provides minimal, high-performance implementations of key scatterplot smoothers, specifically **Smoothing Splines** and **LOESS**. The core logic is implemented in C++ for speed, with convenient Python bindings provided by `pybind11`. The package is designed to be familiar to users of `scikit-learn` and R's statistical functions.
 
 ## Why this repo?
@@ -35,17 +39,13 @@ with just `scipy`, `numpy`
 
 ## Installation
 
-For standard usage, you can install the package directly from this repository using `pip`:
+From PyPI (wheels for common platforms; elsewhere pip builds from the source distribution, which needs a C++14 compiler):
 
 ```bash
-pip install .
+pip install scatter-smooth
 ```
 
-For development, you can install the package in editable mode with the `--no-build-isolation` flag:
-
-```bash
-pip install -e . --no-build-isolation
-```
+Documentation: https://jonathan-taylor.github.io/scatter_smooth/
 
 
 ## Usage Example
@@ -91,19 +91,22 @@ plt.show()
 
 ## Building from Source
 
-To build the package from source, you will need a C++ compiler compatible with C++11 and the required Python development headers. The build process is managed by `setuptools` and `pybind11`.
+The build uses [meson-python](https://meson-python.readthedocs.io) and `pybind11`, and needs a C++14 compiler. Eigen is a git submodule, so clone recursively:
 
-1.  Clone the repository:
-    ```bash
-    git clone https://github.com/your-username/scatter_smooth.git
-    cd scatter_smooth
-    ```
+```bash
+git clone --recursive https://github.com/jonathan-taylor/scatter_smooth.git
+cd scatter_smooth            # (or, in an existing clone: git submodule update --init)
+pip install .
+```
 
-2.  Install the dependencies and build the extension:
-    ```bash
-    pip install -r requirements.txt # Or install numpy, pybind11 manually
-    pip install .
-    ```
+For development, an editable install without build isolation needs the build requirements installed first:
+
+```bash
+pip install ninja "meson-python>=0.18" pybind11 "setuptools_scm>=8" numpy scipy pytest
+pip install -e . --no-build-isolation
+```
+
+The version comes from the git tags (via `setuptools_scm`).
 
 ## Running Tests
 

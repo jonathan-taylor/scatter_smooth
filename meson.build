@@ -1,5 +1,7 @@
 project('scatter_smooth', 'cpp',
-  version : run_command('get_version.py', check: true).stdout().strip(),
+  # setuptools_scm: the git tag, or PKG-INFO in an sdist (as glmstar and coxdev)
+  version : run_command('python', '-c', 'import setuptools_scm; print(setuptools_scm.get_version())',
+                        check: true).stdout().strip(),
   default_options : ['warning_level=3', 'cpp_std=c++14'])
 
 py = import('python').find_installation(pure: false)
@@ -8,7 +10,12 @@ py = import('python').find_installation(pure: false)
 inc = include_directories('src/eigen')
 
 # Pybind11 dependency
-pybind11_dep = dependency('pybind11')
+pybind11_dep = dependency('pybind11', required: false)
+if not pybind11_dep.found()
+  pybind11_incdir = run_command(py, ['-c', 'import pybind11; print(pybind11.get_include())'],
+                                check: true).stdout().strip()
+  pybind11_dep = declare_dependency(include_directories: include_directories(pybind11_incdir))
+endif
 
 # Source files
 sources = [

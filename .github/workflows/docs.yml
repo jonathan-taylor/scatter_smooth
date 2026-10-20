@@ -36,7 +36,7 @@ jobs:
         with:
           # This logic uses the input if it exists, otherwise defaults to the current ref (main)
           ref: ${{ github.event.inputs.tag_name || github.ref }}
-          fetch-depth: 0 # Important for your get-version.py script to see tags!
+          fetch-depth: 0 # setuptools_scm needs the tags for the version
           submodules: recursive
 
       - name: Setup Pages
