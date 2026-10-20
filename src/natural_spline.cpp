@@ -1,5 +1,6 @@
 #include "natural_spline.h"
 #include "utils.h"
+#include <stdexcept>
 #include <iostream>
 
 /**
@@ -207,6 +208,7 @@ Eigen::MatrixXd compute_penalty_matrix(const Eigen::Ref<const Eigen::VectorXd>& 
 }
 
 NaturalSplineSmoother::NaturalSplineSmoother(const Eigen::Ref<const Eigen::VectorXd>& x, const Eigen::Ref<const Eigen::VectorXd>& knots, py::object weights_obj) {
+    if (knots.size() < 4) throw std::invalid_argument("a cubic smoothing spline needs at least 4 knots");
     knots_ = knots;
     N_ = compute_natural_spline_basis(x, knots, true, 0);
     Omega_ = compute_penalty_matrix(knots);
@@ -219,6 +221,7 @@ void NaturalSplineSmoother::update_weights(py::object weights_obj) {
         NTWN_ = N_.transpose() * N_;
     } else {
         Eigen::VectorXd weights = weights_obj.cast<Eigen::VectorXd>();
+        utils::check_size(weights.size(), N_.rows(), "weights");
         NTW_ = N_.transpose(); 
         for (int i = 0; i < NTW_.cols(); ++i) NTW_.col(i) *= weights[i];
         NTWN_ = NTW_ * N_;
@@ -226,6 +229,7 @@ void NaturalSplineSmoother::update_weights(py::object weights_obj) {
 }
 
 Eigen::VectorXd NaturalSplineSmoother::smooth(const Eigen::Ref<const Eigen::VectorXd>& y, double lamval) {
+    utils::check_size(y.size(), N_.rows(), "y");
     Eigen::MatrixXd LHS = NTWN_ + lamval * Omega_;
     Eigen::VectorXd RHS = NTW_ * y;
     Eigen::LLT<Eigen::MatrixXd> solver;
@@ -239,6 +243,10 @@ Eigen::VectorXd NaturalSplineSmoother::smooth(const Eigen::Ref<const Eigen::Vect
 }
 
 Eigen::VectorXd NaturalSplineSmoother::predict(const Eigen::Ref<const Eigen::VectorXd>& x_new, int deriv) {
+    if (alpha_.size() != N_.cols())
+        throw std::runtime_error("predict: the smoother is not fitted yet (call smooth first)");
+    if (deriv < 0 || deriv > 2)
+        throw std::invalid_argument("deriv should be 0, 1 or 2 for engine='natural'");
     Eigen::MatrixXd N_new = compute_natural_spline_basis(x_new, knots_, true, deriv);
     return N_new * alpha_;
 }

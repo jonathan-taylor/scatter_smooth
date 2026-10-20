@@ -3,6 +3,7 @@
 #include <iostream>
 #include <cmath>
 #include <algorithm>
+#include <stdexcept>
 #include <Eigen/Sparse>
 
 namespace bspline {
@@ -56,7 +57,10 @@ BSplineSmoother::BSplineSmoother(const Eigen::Ref<const Eigen::VectorXd>& x, con
     if (n_i > 2) knots_.segment(order, n_i - 2) = i_k.segment(1, n_i - 2);
     for(int i=0; i<order; ++i) knots_[n_a - order + i] = i_k[n_i - 1];
     n_basis_ = (int)(n_a - order);
+    if (n_i < 4) throw std::invalid_argument("a cubic smoothing spline needs at least 4 knots");
+    if (order != 4) throw std::invalid_argument("only cubic splines (order 4) are supported");
     weights_ = w_obj.is_none() ? Eigen::VectorXd::Ones(x.size()) : w_obj.cast<Eigen::VectorXd>();
+    utils::check_size(weights_.size(), x.size(), "weights");
     basis_at_x_.resize(order_, x_.size()); span_at_x_.resize(x_.size());
     Eigen::VectorXd b_v(order_);
     for (int i = 0; i < x_.size(); ++i) {
@@ -104,7 +108,7 @@ void BSplineSmoother::initialize_penalty() {
 }
 
 void BSplineSmoother::update_weights(const Eigen::Ref<const Eigen::VectorXd>& w) {
-    if (w.size() != x_.size()) throw std::runtime_error("update_weights: the weights have the wrong length");
+    utils::check_size(w.size(), x_.size(), "weights");
     weights_ = w;
     initialize_design();
 }
@@ -335,7 +339,7 @@ Eigen::MatrixXd BSplineSmoother::compute_penalty() {
 
 Eigen::VectorXd BSplineSmoother::compute_rhs(const Eigen::Ref<const Eigen::VectorXd>& y) {
     int n = n_basis_;
-    if (y.size() != x_.size()) throw std::runtime_error("compute_rhs: y has the wrong length");
+    utils::check_size(y.size(), x_.size(), "y");
     Eigen::VectorXd b = Eigen::VectorXd::Zero(n);
     for(int i=0; i<x_.size(); ++i) {
         int s_i = span_at_x_[i];
@@ -360,6 +364,7 @@ void BSplineSmoother::set_solution(const Eigen::Ref<const Eigen::VectorXd>& sol)
 }
 
 Eigen::VectorXd BSplineSmoother::smooth(const Eigen::Ref<const Eigen::VectorXd>& y, double lamval) {
+    utils::check_size(y.size(), x_.size(), "y");
     Eigen::MatrixXd NTWN = compute_design();
     Eigen::MatrixXd Omega = compute_penalty();
     Eigen::VectorXd b = compute_rhs(y);
@@ -393,7 +398,7 @@ Eigen::VectorXd BSplineSmoother::smooth(const Eigen::Ref<const Eigen::VectorXd>&
     Eigen::SimplicialLLT<Eigen::SparseMatrix<double>> solver;
     solver.compute(A_sparse);
     if(solver.info() != Eigen::Success) {
-        throw std::runtime_error("Decomposition failed in BSplineSmoother::fit");
+        throw std::runtime_error("Decomposition failed in BSplineSmoother::smooth");
     }
     
     Eigen::VectorXd sol = solver.solve(b_sub);
@@ -494,6 +499,9 @@ double BSplineSmoother::solve_gcv(const Eigen::Ref<const Eigen::VectorXd>& y, do
 }
 
 Eigen::VectorXd BSplineSmoother::predict(const Eigen::Ref<const Eigen::VectorXd>& x_n, int deriv) {
+    if (coeffs_.size() != n_basis_)
+        throw std::runtime_error("predict: the smoother is not fitted yet (call smooth first)");
+    if (deriv < 0 || deriv > 3) throw std::invalid_argument("deriv should be 0, 1, 2 or 3");
     Eigen::VectorXd y_p(x_n.size()), b_v(order_); int s_i; double d_min = knots_[order_-1], d_max = knots_[knots_.size() - order_];
     for (int i = 0; i < (int)x_n.size(); ++i) {
         double val = x_n[i];

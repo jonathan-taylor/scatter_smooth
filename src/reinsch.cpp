@@ -1,6 +1,7 @@
 #include "reinsch.h"
 #include "utils.h"
 #include <limits>
+#include <stdexcept>
 #include <cmath>
 #include <iostream>
 
@@ -33,11 +34,16 @@ void CubicSplineTraceCpp::compute_QR_bands() {
 }
 
 CubicSplineTraceCpp::CubicSplineTraceCpp(const Eigen::Ref<const Eigen::VectorXd>& x, py::object weights_obj) {
+    if (x.size() < 4) throw std::invalid_argument("a cubic smoothing spline needs at least 4 knots");
     x_ = x; n_ = x.size(); h_.resize(n_ - 1);
     for (int i = 0; i < n_ - 1; ++i) h_(i) = x_(i + 1) - x_(i);
     weights_inv_.resize(n_);
     if (weights_obj.is_none()) weights_inv_.setOnes();
-    else weights_inv_ = weights_obj.cast<Eigen::VectorXd>().cwiseInverse();
+    else {
+        Eigen::VectorXd w = weights_obj.cast<Eigen::VectorXd>();
+        utils::check_size(w.size(), n_, "weights");
+        weights_inv_ = w.cwiseInverse();
+    }
     compute_QR_bands();
 }
 
@@ -99,6 +105,7 @@ double CubicSplineTraceCpp::compute_trace(double lam) {
  *   f = y - lambda * W^-1 * Q * gamma
  */
 ReinschSmoother::ReinschSmoother(const Eigen::Ref<const Eigen::VectorXd>& x, py::object weights_obj) {
+    if (x.size() < 4) throw std::invalid_argument("a cubic smoothing spline needs at least 4 knots");
     x_ = x; n_ = x.size(); long n_inner = n_ - 2;
     Eigen::VectorXd h = x.segment(1, n_ - 1) - x.segment(0, n_ - 1);
     Eigen::VectorXd inv_h = h.cwiseInverse();
@@ -118,7 +125,13 @@ ReinschSmoother::ReinschSmoother(const Eigen::Ref<const Eigen::VectorXd>& x, py:
 
 void ReinschSmoother::update_weights(py::object weights_obj) {
     if (weights_obj.is_none()) weights_inv_ = Eigen::VectorXd::Ones(n_);
-    else weights_inv_ = weights_obj.cast<Eigen::VectorXd>().cwiseInverse();
+    else {
+        Eigen::VectorXd w = weights_obj.cast<Eigen::VectorXd>();
+        utils::check_size(w.size(), n_, "weights");
+        if ((w.array() <= 0).any())
+            throw std::invalid_argument("the Reinsch engine needs positive weights at every knot");
+        weights_inv_ = w.cwiseInverse();
+    }
     Eigen::SparseMatrix<double> Winv(n_, n_);
     std::vector<Eigen::Triplet<double>> w_t;
     for(int i=0; i<n_; ++i) w_t.push_back({i, i, weights_inv_[i]});
@@ -127,6 +140,7 @@ void ReinschSmoother::update_weights(py::object weights_obj) {
 }
 
 Eigen::VectorXd ReinschSmoother::smooth(const Eigen::Ref<const Eigen::VectorXd>& y, double lamval) {
+    utils::check_size(y.size(), n_, "y");
     Eigen::VectorXd QT_y = Q_.transpose() * y;
     Eigen::SparseMatrix<double> LHS = R_ + lamval * M_;
     Eigen::SimplicialLLT<Eigen::SparseMatrix<double>> solver;
@@ -174,6 +188,9 @@ double ReinschSmoother::compute_df_sparse(double lamval) {
 }
 
 Eigen::VectorXd ReinschSmoother::predict(const Eigen::Ref<const Eigen::VectorXd>& x_new, int deriv) {
+    if (gamma_.size() != n_ - 2 || f_.size() != n_)
+        throw std::runtime_error("predict: the smoother is not fitted yet (call smooth first)");
+    if (deriv < 0 || deriv > 3) throw std::invalid_argument("deriv should be 0, 1, 2 or 3");
     Eigen::VectorXd M_c(n_); M_c[0] = 0.0; M_c[n_-1] = 0.0; M_c.segment(1, n_-2) = gamma_;
     Eigen::VectorXd y_p(x_new.size());
     for(long i=0; i<x_new.size(); ++i) {
@@ -195,7 +212,7 @@ Eigen::VectorXd ReinschSmoother::predict(const Eigen::Ref<const Eigen::VectorXd>
                 y_p[i] = (-3.0 * std::pow(x_[k+1] - val, 2) * M_c[k] + 3.0 * std::pow(val - x_[k], 2) * M_c[k+1]) / (6.0 * h) -
                             (f_[k] - h*h * M_c[k] / 6.0) / h + (f_[k+1] - h*h * M_c[k+1] / 6.0) / h;
             } else if (deriv == 2) y_p[i] = (6.0 * (x_[k+1] - val) * M_c[k] + 6.0 * (val - x_[k]) * M_c[k+1]) / (6.0 * h);
-            else y_p[i] = 0;
+            else y_p[i] = (M_c[k+1] - M_c[k]) / h;   // the third derivative, constant on each interval
         }
     }
     return y_p;

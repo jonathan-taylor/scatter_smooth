@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 import numpy as np
 from ._scatter_smooth_extension import LoessSmootherCpp
+from .splines import _as_vector, _check_weights
 
 @dataclass
 class LoessSmoother:
@@ -28,11 +29,15 @@ class LoessSmoother:
     _cpp_fitter: LoessSmootherCpp = field(init=False, default=None, repr=False)
 
     def __post_init__(self):
-        self.x = np.asarray(self.x, dtype=float)
+        self.x = _as_vector(self.x, 'x')
+        if len(self.x) == 0:
+            raise ValueError('x is empty')
         if self.w is not None:
-            self.w = np.asarray(self.w, dtype=float)
+            self.w = _check_weights(self.w, len(self.x))
         if self.degree not in [0, 1, 2, 3]:
             raise ValueError("Degree must be in range [0, 3].")
+        if not (np.isfinite(self.span) and self.span > 0):
+            raise ValueError(f'span should be positive and finite, got {self.span}')
         
         self._cpp_fitter = LoessSmootherCpp(self.x, self.w, self.span, self.degree)
         self._coef = self._intercept = self._y_hat_train = None
@@ -48,7 +53,7 @@ class LoessSmoother:
         sample_weight : np.ndarray, optional
             Observation weights. If provided, updates the instance weights.
         """
-        self.y = np.asarray(y, dtype=float)
+        self.y = _as_vector(y, 'y', len(self.x))
         if sample_weight is not None:
             self.update_weights(sample_weight)
         self._cpp_fitter.set_y(self.y)
@@ -56,7 +61,7 @@ class LoessSmoother:
 
     def _get_y_hat_train(self):
         if self.y is None:
-            raise ValueError("Model has not been fitted yet. Call fit(y) first.")
+            raise ValueError("Model has not been fitted yet. Call smooth(y) first.")
         if self._y_hat_train is None:
             self._y_hat_train = self._cpp_fitter.predict(self.x, 0)
         return self._y_hat_train
@@ -93,7 +98,7 @@ class LoessSmoother:
         w : np.ndarray
             New weights.
         """
-        self.w = np.asarray(w, dtype=float)
+        self.w = _check_weights(w, len(self.x))
         self._cpp_fitter.update_weights(self.w)
         self._coef = self._intercept = self._y_hat_train = None
 
@@ -124,7 +129,7 @@ class LoessSmoother:
             The predicted response or its derivative.
         """
         if self.y is None:
-            raise ValueError("Model has not been fitted yet. Call fit(y) first.")
+            raise ValueError("Model has not been fitted yet. Call smooth(y) first.")
             
         if x_new is None:
             if deriv == 0:
@@ -133,5 +138,7 @@ class LoessSmoother:
         else:
             x_pred = x_new
             
-        x_pred = np.atleast_1d(x_pred).astype(float)
+        if deriv not in range(self.degree + 1):
+            raise ValueError(f'deriv should be between 0 and degree={self.degree}, got {deriv}')
+        x_pred = np.atleast_1d(np.asarray(x_pred, dtype=float)).ravel()
         return self._cpp_fitter.predict(x_pred, deriv)

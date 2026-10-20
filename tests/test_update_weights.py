@@ -126,10 +126,11 @@ def test_reinsch_ties():
     scenario, especially when the original x data contains duplicate values.
     """
     rng = np.random.default_rng(42)
-    x = np.array([1.0, 1.0, 2.0, 2.0, 3.0, 3.0])
-    y = x + rng.normal(0, 0.1, 6)
-    w1 = np.ones(6)
-    w2 = np.array([2.0, 0.5, 2.0, 0.5, 2.0, 0.5])
+    # (a cubic smoothing spline needs at least 4 distinct values)
+    x = np.array([1.0, 1.0, 2.0, 2.0, 3.0, 3.0, 4.0, 4.0])
+    y = x + rng.normal(0, 0.1, 8)
+    w1 = np.ones(8)
+    w2 = np.array([2.0, 0.5, 2.0, 0.5, 2.0, 0.5, 2.0, 0.5])
 
     # Reinsch with ties
     # Reinsch is only used if knots match unique x.

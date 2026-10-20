@@ -1,7 +1,6 @@
 from dataclasses import dataclass, field
 import numpy as np
 from scipy.linalg import (cholesky_banded,
-                          cho_solve_banded,
                           solveh_banded)
 from scipy.optimize import brentq
 
@@ -11,6 +10,29 @@ from ._scatter_smooth_extension import (
     BSplineSmoother,
     trace_takahashi
 )
+
+def _as_vector(v, name, n=None):
+    """`v` as a finite 1-D float array (an (n, 1) array is accepted), of length `n` if given."""
+    v = np.asarray(v, dtype=float)
+    if v.ndim == 2 and v.shape[1] == 1:
+        v = v[:, 0]
+    if v.ndim != 1:
+        raise ValueError(f'{name} should be 1-dimensional, got shape {v.shape}')
+    if n is not None and v.shape[0] != n:
+        raise ValueError(f'{name} has length {v.shape[0]}, expected {n}')
+    if not np.all(np.isfinite(v)):
+        raise ValueError(f'{name} has non-finite values')
+    return v
+
+
+def _check_weights(w, n):
+    w = _as_vector(w, 'weights', n)
+    if np.any(w < 0):
+        raise ValueError('weights should be non-negative')
+    if not np.any(w > 0):
+        raise ValueError('at least one weight should be positive')
+    return w
+
 
 def _nknots_smspl(n):
     """The number of knots of R's `smooth.spline` (`.nknots.smspl`) for `n` unique values."""
@@ -87,7 +109,6 @@ class SplineSmoother:
     _inverse_indices: np.ndarray = field(init=False, default=None, repr=False)
     _NTWN: np.ndarray = field(init=False, default=None, repr=False)
     _Omega: np.ndarray = field(init=False, default=None, repr=False)
-    _cholesky_cache: dict = field(init=False, default_factory=dict, repr=False)
     
     # Scaling parameters
     x_min_: float = field(init=False, default=0.0)
@@ -100,15 +121,39 @@ class SplineSmoother:
     intercept_: float = field(init=False, default=None)
 
     def __post_init__(self):
+        self._validate()
         self._setup_scaling_and_knots()
         self._prepare_matrices()
         
-        self._cholesky_cache = {}
         if self.df is not None:
             self.lamval = self._find_lamval_for_df(self.df)
         elif self.lamval is None:
             self.lamval = 0.0
         
+    def _validate(self):
+        self.x = _as_vector(self.x, 'x')
+        if len(np.unique(self.x)) < 4:
+            raise ValueError('a cubic smoothing spline needs at least 4 distinct x values')
+        if self.w is not None:
+            self.w = _check_weights(self.w, len(self.x))
+        if self.df is not None and self.lamval is not None:
+            raise ValueError('give one of df and lamval, not both')
+        if self.lamval is not None and not (np.isfinite(self.lamval) and self.lamval >= 0):
+            raise ValueError(f'lamval should be non-negative and finite, got {self.lamval}')
+        if self.df is not None and not np.isfinite(self.df):
+            raise ValueError(f'df should be finite, got {self.df}')
+        if self.order != 4:
+            raise ValueError('only cubic splines (order=4) are supported')
+        if self.n_knots is not None and (int(self.n_knots) != self.n_knots or self.n_knots < 4):
+            raise ValueError(f'n_knots should be an integer of at least 4, got {self.n_knots}')
+        if self.knots is not None:
+            knots = np.unique(_as_vector(self.knots, 'knots'))
+            if len(knots) < 4:
+                raise ValueError('a cubic smoothing spline needs at least 4 distinct knots')
+            self.knots = knots
+        if self.engine not in ('auto', 'reinsch', 'bspline', 'natural'):
+            raise ValueError(f"Unknown engine: {self.engine}")
+
     def _setup_scaling_and_knots(self):
         """
         Compute the scaled values and knots required for both
@@ -131,8 +176,7 @@ class SplineSmoother:
             else:
                 knots = _default_knots(np.unique(x), self.all_knots)
         else:
-            knots = np.asarray(knots)
-            knots.sort()
+            knots = np.sort(np.asarray(knots, float))      # a copy
             
         self.knots = knots
         n_k = len(knots)
@@ -159,8 +203,13 @@ class SplineSmoother:
             np.allclose(self.knots_scaled_, unique_x)
         )
         
+        if self.w is not None:
+            # the Reinsch engine needs a positive total weight at every knot
+            has_empty_knot = np.any(np.bincount(inverse, weights=self.w) <= 0)
+        else:
+            has_empty_knot = False
         if self.engine == 'auto':
-            if is_reinsch_compatible:
+            if is_reinsch_compatible and not has_empty_knot:
                 self.engine = 'reinsch'
             else:
                 # Default fallback, should go to bspline
@@ -169,6 +218,9 @@ class SplineSmoother:
         if self.engine == 'reinsch':
             if not is_reinsch_compatible:
                 raise ValueError("Reinsch engine requires knots to be exactly the unique x values.")
+            if has_empty_knot:
+                raise ValueError("Reinsch engine requires a positive weight at every unique x "
+                                 "value; use engine='bspline' for zero weights")
             
             self._use_reinsch = True
             self._inverse_indices = inverse
@@ -204,11 +256,16 @@ class SplineSmoother:
                                            self._aggregated_weights(), self.order)
         self._NTWN = None
         self._Omega = None
-        self._cholesky_cache = {}
 
     def compute_df(self, lamval=None, eps=1e-12):
         """
         Compute the degrees of freedom for a given lambda.
+
+        For the B-spline engine, `eps` times the mean diagonal of the system
+        is added to its diagonal, which keeps the trace stable at very large
+        lambda (where the penalty, null on linear functions, swamps the
+        design). That factor is not used by `smooth`, which solves the exact
+        system.
         """
         if lamval is None:
             lamval = self.lamval
@@ -228,20 +285,15 @@ class SplineSmoother:
             NTWN_sub = NTWN[:, 1:n-1]
             Omega_sub = Omega[:, 1:n-1]
             
-            # Compute Cholesky explicitly and cache it
             AB = lam_scaled * Omega_sub + NTWN_sub
-            
-            # Add small padding to ensure positive definiteness
             if eps > 0:
                 AB[-1, :] += eps * (np.abs(AB[-1, :]).mean() + 1e-10)
-
             try:
                 # lower=False for Upper Banded
                 U = cholesky_banded(AB, lower=False)
             except np.linalg.LinAlgError as e:
                 raise RuntimeError(f'compute_df: the spline system is not positive definite '
                                    f'at lamval={lamval}') from e
-            self._cholesky_cache[lam_scaled] = U
             df = trace_takahashi(U, NTWN_sub)
         else:
             df = self._cpp_fitter.compute_df(lam_scaled)
@@ -342,9 +394,8 @@ class SplineSmoother:
              self.lamval = 0.0
         lam_scaled = self.lamval / self.x_scale_**3
         
-        y_arr = np.asarray(y, float)
-        if len(y_arr) != len(self.x):
-            raise ValueError(f'y has length {len(y_arr)}, x has length {len(self.x)}')
+        y_arr = _as_vector(y, 'y', len(self.x))
+        self._fitted = True
         if self._use_reinsch:
              y_eff = self._aggregated_response(y_arr)
              fitted_unique = np.asarray(self._cpp_fitter.smooth(y_eff, lam_scaled))
@@ -360,14 +411,11 @@ class SplineSmoother:
              n = b.shape[0]
              b_sub = b[1:n-1]
              
-             if lam_scaled in self._cholesky_cache:
-                 U = self._cholesky_cache[lam_scaled]
-                 sol = cho_solve_banded((U, False), b_sub)
-             else:
-                 NTWN_sub = self._NTWN[:, 1:n-1]
-                 Omega_sub = self._Omega[:, 1:n-1]
-                 AB = lam_scaled * Omega_sub + NTWN_sub
-                 sol = solveh_banded(AB, b_sub, lower=False)
+             # the exact system (compute_df's factor is regularized)
+             NTWN_sub = self._NTWN[:, 1:n-1]
+             Omega_sub = self._Omega[:, 1:n-1]
+             AB = lam_scaled * Omega_sub + NTWN_sub
+             sol = solveh_banded(AB, b_sub, lower=False)
                  
              self._cpp_fitter.set_solution(sol)
              self.spline_coef_ = np.asarray(sol, float)
@@ -410,6 +458,7 @@ class SplineSmoother:
         else:
             raise NotImplementedError("set_spline_coef: not available for engine='natural'")
         self.spline_coef_ = coef.copy()
+        self._fitted = True
         return self
 
     def roughness(self, coef=None):
@@ -456,6 +505,13 @@ class SplineSmoother:
         np.ndarray
             The predicted response or its derivative.
         """
+        if not getattr(self, '_fitted', False):
+            raise RuntimeError('the smoother is not fitted yet: call smooth(y) first')
+        if deriv not in (0, 1, 2, 3):
+            raise ValueError(f'deriv should be 0, 1, 2 or 3, got {deriv}')
+        x = np.atleast_1d(np.asarray(x, dtype=float))
+        if x.ndim == 2 and x.shape[1] == 1:
+            x = x[:, 0]
         x_scaled = (x - self.x_min_) / self.x_scale_
         
         # Scale the derivative by the chain rule
@@ -478,16 +534,17 @@ class SplineSmoother:
         Set new weights for the next smooths. `lamval` is kept; with a `df`
         target, call `_find_lamval_for_df` again to match it at the new weights.
         """
-        w = np.asarray(w, float)
-        if len(w) != len(self.x):
-            raise ValueError(f'w has length {len(w)}, x has length {len(self.x)}')
+        w = _check_weights(w, len(self.x))
         self.w = w
         if self.engine == 'reinsch':
-             self._cpp_fitter.update_weights(self._aggregated_weights())
+             w_agg = self._aggregated_weights()
+             if np.any(w_agg <= 0):
+                 raise ValueError("Reinsch engine requires a positive weight at every unique x "
+                                  "value; use engine='bspline' for zero weights")
+             self._cpp_fitter.update_weights(w_agg)
         elif self.engine == 'bspline':
              self._cpp_fitter.update_weights(self._aggregated_weights())
              self._NTWN = None
-             self._cholesky_cache = {}
         else:
              self._cpp_fitter.update_weights(self.w)
         

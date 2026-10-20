@@ -1,4 +1,6 @@
 #include "loess.h"
+#include "utils.h"
+#include <stdexcept>
 #include <algorithm>
 #include <cmath>
 #include <vector>
@@ -10,14 +12,14 @@ LoessSmootherCpp::LoessSmootherCpp(const Eigen::Ref<const Eigen::VectorXd>& x,
                                    int degree) 
     : x_(x), span_(span), degree_(degree) {
     n_ = x_.size();
-    if (weights_obj.is_none()) {
-        w_ = Eigen::VectorXd::Ones(n_);
-    } else {
-        w_ = weights_obj.cast<Eigen::VectorXd>();
-    }
+    if (n_ < 1) throw std::invalid_argument("x is empty");
+    if (!(span_ > 0) || !std::isfinite(span_)) throw std::invalid_argument("span should be positive and finite");
+    if (degree_ < 0 || degree_ > 3) throw std::invalid_argument("degree should be 0, 1, 2 or 3");
+    update_weights(weights_obj);
 }
 
 void LoessSmootherCpp::set_y(const Eigen::Ref<const Eigen::VectorXd>& y) {
+    utils::check_size(y.size(), n_, "y");
     y_ = y;
 }
 
@@ -25,7 +27,9 @@ void LoessSmootherCpp::update_weights(py::object weights_obj) {
     if (weights_obj.is_none()) {
         w_ = Eigen::VectorXd::Ones(n_);
     } else {
-        w_ = weights_obj.cast<Eigen::VectorXd>();
+        Eigen::VectorXd w = weights_obj.cast<Eigen::VectorXd>();
+        utils::check_size(w.size(), n_, "weights");
+        w_ = w;
     }
 }
 
@@ -36,6 +40,9 @@ long factorial(int n) {
 }
 
 Eigen::VectorXd LoessSmootherCpp::predict(const Eigen::Ref<const Eigen::VectorXd>& x_new, int deriv) {
+    if (y_.size() != n_) throw std::runtime_error("predict: the smoother is not fitted yet (call smooth first)");
+    if (deriv < 0 || deriv > degree_)
+        throw std::invalid_argument("deriv should be between 0 and the degree of the local polynomial");
     int n_new = x_new.size();
     Eigen::VectorXd y_pred(n_new);
 
