@@ -137,3 +137,16 @@ def test_df_beyond_range_raises():
     s = SplineSmoother(np.repeat(np.arange(5.), 10), n_knots=20, df=4)
     assert s.n_k_ == 5
     np.testing.assert_allclose(s.compute_df(), 4, rtol=1e-8)
+
+
+def test_df_fit_is_exact():
+    # after matching df, smooth() solved with compute_df's cached factor,
+    # whose diagonal was padded: the fit was off by about 3e-7
+    rng = np.random.default_rng(0)
+    x = rng.uniform(0, 1, 5000)
+    y = np.sin(6 * x) + rng.standard_normal(5000)
+    s = SplineSmoother(x, df=5)
+    f1 = s.smooth(y)
+    # the penalized least squares solution, directly
+    ref = SplineSmoother(x, lamval=s.lamval)
+    np.testing.assert_allclose(f1, ref.smooth(y), rtol=1e-12, atol=1e-12)

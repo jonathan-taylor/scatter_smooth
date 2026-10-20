@@ -1,7 +1,6 @@
 from dataclasses import dataclass, field
 import numpy as np
 from scipy.linalg import (cholesky_banded,
-                          cho_solve_banded,
                           solveh_banded)
 from scipy.optimize import brentq
 
@@ -110,7 +109,6 @@ class SplineSmoother:
     _inverse_indices: np.ndarray = field(init=False, default=None, repr=False)
     _NTWN: np.ndarray = field(init=False, default=None, repr=False)
     _Omega: np.ndarray = field(init=False, default=None, repr=False)
-    _cholesky_cache: dict = field(init=False, default_factory=dict, repr=False)
     
     # Scaling parameters
     x_min_: float = field(init=False, default=0.0)
@@ -127,7 +125,6 @@ class SplineSmoother:
         self._setup_scaling_and_knots()
         self._prepare_matrices()
         
-        self._cholesky_cache = {}
         if self.df is not None:
             self.lamval = self._find_lamval_for_df(self.df)
         elif self.lamval is None:
@@ -259,11 +256,16 @@ class SplineSmoother:
                                            self._aggregated_weights(), self.order)
         self._NTWN = None
         self._Omega = None
-        self._cholesky_cache = {}
 
     def compute_df(self, lamval=None, eps=1e-12):
         """
         Compute the degrees of freedom for a given lambda.
+
+        For the B-spline engine, `eps` times the mean diagonal of the system
+        is added to its diagonal, which keeps the trace stable at very large
+        lambda (where the penalty, null on linear functions, swamps the
+        design). That factor is not used by `smooth`, which solves the exact
+        system.
         """
         if lamval is None:
             lamval = self.lamval
@@ -283,20 +285,15 @@ class SplineSmoother:
             NTWN_sub = NTWN[:, 1:n-1]
             Omega_sub = Omega[:, 1:n-1]
             
-            # Compute Cholesky explicitly and cache it
             AB = lam_scaled * Omega_sub + NTWN_sub
-            
-            # Add small padding to ensure positive definiteness
             if eps > 0:
                 AB[-1, :] += eps * (np.abs(AB[-1, :]).mean() + 1e-10)
-
             try:
                 # lower=False for Upper Banded
                 U = cholesky_banded(AB, lower=False)
             except np.linalg.LinAlgError as e:
                 raise RuntimeError(f'compute_df: the spline system is not positive definite '
                                    f'at lamval={lamval}') from e
-            self._cholesky_cache[lam_scaled] = U
             df = trace_takahashi(U, NTWN_sub)
         else:
             df = self._cpp_fitter.compute_df(lam_scaled)
@@ -414,14 +411,11 @@ class SplineSmoother:
              n = b.shape[0]
              b_sub = b[1:n-1]
              
-             if lam_scaled in self._cholesky_cache:
-                 U = self._cholesky_cache[lam_scaled]
-                 sol = cho_solve_banded((U, False), b_sub)
-             else:
-                 NTWN_sub = self._NTWN[:, 1:n-1]
-                 Omega_sub = self._Omega[:, 1:n-1]
-                 AB = lam_scaled * Omega_sub + NTWN_sub
-                 sol = solveh_banded(AB, b_sub, lower=False)
+             # the exact system (compute_df's factor is regularized)
+             NTWN_sub = self._NTWN[:, 1:n-1]
+             Omega_sub = self._Omega[:, 1:n-1]
+             AB = lam_scaled * Omega_sub + NTWN_sub
+             sol = solveh_banded(AB, b_sub, lower=False)
                  
              self._cpp_fitter.set_solution(sol)
              self.spline_coef_ = np.asarray(sol, float)
@@ -551,7 +545,6 @@ class SplineSmoother:
         elif self.engine == 'bspline':
              self._cpp_fitter.update_weights(self._aggregated_weights())
              self._NTWN = None
-             self._cholesky_cache = {}
         else:
              self._cpp_fitter.update_weights(self.w)
         

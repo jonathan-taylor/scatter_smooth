@@ -17,6 +17,7 @@
 - The B-spline engine no longer reuses a stale Cholesky factor after `update_weights`. (#15)
 - `smooth(y, sample_weight=...)` goes through `update_weights`, so it is right with tied `x`. (#16)
 - The B-spline engine's maximum df is the number of knots; a `df` outside `[2, n_knots]` raises `ValueError`; tied quantile knots (`n_knots` with tied `x`) are dropped. (#18)
+- After `df` targeting, the B-spline engine's `smooth()` solved with the padded Cholesky factor cached by `compute_df`, so the fit was off by about 3e-7; it now always solves the exact system (the cache is gone). (#38)
 - `predict()` before `smooth()` raises `RuntimeError` instead of crashing, in Python and in every C++ class. (#12)
 - Every C++ entry point checks the lengths of `y`, the weights and banded matrices, raising `ValueError` instead of reading out of bounds. (#13)
 - Input validation (#14):
