@@ -34,3 +34,7 @@
 - Metadata: project URLs, the PEP 639 license fields (with Eigen's MPL-2.0 licence file in the wheel), an accurate description, `requires-python >= 3.10`, classifiers, a `test` extra, `__version__`, and pytest `testpaths`. (#32)
 - Eigen comes from the GitHub mirror (`eigen-mirror/eigen`, the same commit), meson falls back to `pybind11.get_include()`, and stale ignores and comments are gone. (#34)
 - README: `pip install scatter-smooth`, badges and the docs link; building from source with a recursive clone and meson-python. (#31)
+- CI: Python 3.10–3.14 on Linux, macOS and Windows, `fail-fast: false`, a concurrency group, read-only permissions and a pip cache; the package is installed normally and the tests run from an empty directory, so the installed package is tested; current action versions. (#29)
+- CI: one job runs the R comparisons with rpy2, and fails (instead of skipping) if R isn't usable (`SCATTER_SMOOTH_REQUIRE_R`). (#27)
+- Wheels: Linux x86_64 and aarch64, macOS arm64 and x86_64, Windows x86_64 and ARM64, each installed and tested by cibuildwheel; built on tags as well as on demand; the sdist is built and test-installed (its version checked); tags publish to PyPI by trusted publishing. No free-threaded or 32-bit builds. (#28)
+- Tests: the pure-Python reference implementations are `tests/_ref_*.py`, and `tests` is no longer a package, so the tests run from any directory against the installed package. (#24, in part)

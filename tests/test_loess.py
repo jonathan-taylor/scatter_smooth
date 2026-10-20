@@ -11,7 +11,7 @@ includes tests for:
 import numpy as np
 import pytest
 from scatter_smooth.loess import LoessSmoother
-from .loess import LoessSmoother as LoessSmootherNaive
+from _ref_loess import LoessSmoother as LoessSmootherNaive
 
 def test_lowess_consistency():
     """

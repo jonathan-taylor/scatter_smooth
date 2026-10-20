@@ -14,7 +14,7 @@ import pytest
 from scipy import sparse
 from scipy.sparse import linalg as splinalg
 from scatter_smooth import SplineSmoother
-from tests.spline_fitter import SplineSmoother as SplineSmootherPy
+from _ref_spline_fitter import SplineSmoother as SplineSmootherPy
 
 from scatter_smooth._scatter_smooth_extension import NaturalSplineSmoother as ExtSplineSmootherCpp
 

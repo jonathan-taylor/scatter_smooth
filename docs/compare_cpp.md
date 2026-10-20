@@ -25,12 +25,12 @@ import time
 import sys
 import os
 
-# Ensure we can import from tests
-sys.path.append(os.path.abspath('..'))
+# the pure Python reference implementation lives with the tests
+sys.path.append(os.path.abspath(os.path.join('..', 'tests')))
 
 from scatter_smooth import SplineSmoother
 try:
-    from tests.spline_fitter import SplineSmoother as SplineSmootherPy
+    from _ref_spline_fitter import SplineSmoother as SplineSmootherPy
 except ImportError:
     print("Could not import pure Python SplineSmoother from tests.")
     SplineSmootherPy = None

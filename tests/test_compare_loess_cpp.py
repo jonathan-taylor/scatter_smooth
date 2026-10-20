@@ -6,7 +6,7 @@ produces results that are consistent with the pure Python implementation.
 It checks both the predicted values and their derivatives.
 """
 import numpy as np
-from .loess import LoessSmoother as LoessSmootherPy
+from _ref_loess import LoessSmoother as LoessSmootherPy
 from scatter_smooth import LoessSmoother 
 
 def test_compare_cpp_python_loess():

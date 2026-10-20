@@ -2,38 +2,80 @@ name: Tests
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main ]
   pull_request:
-    branches: [ main, master ]
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
+    name: Test (${{ matrix.os }}, Python ${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ["3.10", "3.11", "3.12"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
       with:
         submodules: recursive
         fetch-depth: 0
 
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v7
       with:
         python-version: ${{ matrix.python-version }}
+        cache: pip
 
-    - name: Set up R
-      uses: r-lib/actions/setup-r@v2
-
-    - name: Install dependencies
+    - name: Install
       run: |
         python -m pip install --upgrade pip
-        python -m pip install ninja "meson-python>=0.18" pybind11 "setuptools_scm>=8" pytest
-        pip install -e . --no-build-isolation
+        python -m pip install ".[test]"
 
+    # from a copy of the tests in an empty directory: the installed package,
+    # not the source tree, is tested
     - name: Run tests
+      shell: bash
       run: |
-        pytest
+        mkdir -p "$RUNNER_TEMP/run" && cp -R tests "$RUNNER_TEMP/run/"
+        cd "$RUNNER_TEMP/run" && python -m pytest tests -q
+
+  test-R:
+    name: Test against R
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        submodules: recursive
+        fetch-depth: 0
+
+    - uses: actions/setup-python@v7
+      with:
+        python-version: "3.12"
+        cache: pip
+
+    # only base R (smooth.spline, loess) is needed
+    - uses: r-lib/actions/setup-r@v2
+      with:
+        use-public-rspm: true
+
+    - name: Install
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install ".[test]" rpy2
+
+    - name: Run tests (the R comparisons must run)
+      env:
+        SCATTER_SMOOTH_REQUIRE_R: "1"
+      run: |
+        mkdir -p "$RUNNER_TEMP/run" && cp -R tests "$RUNNER_TEMP/run/"
+        cd "$RUNNER_TEMP/run" && python -m pytest tests -q -rs
