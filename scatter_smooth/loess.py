@@ -18,6 +18,18 @@ class LoessSmoother:
         The smoothing parameter (fraction of points to use as neighbors). Default is 0.75.
     degree : int, optional
         The degree of the local polynomial (0, 1, 2, or 3). Default is 1.
+
+    Notes
+    -----
+    The local fit at a point uses its `ceil(span * n)` nearest neighbours,
+    with all the points tied at the largest of their distances, and tricube
+    weights; for `span > 1` all the points, with the bandwidth `sqrt(span)`
+    times the largest distance (as R's `loess`). Without ties the fits agree
+    with R's `loess(..., surface="direct")` (not its default interpolation)
+    and with statsmodels' `lowess(it=0, delta=0)`. When the neighbourhood
+    holds fewer distinct x values than the degree needs (tied x), the local
+    polynomial drops its highest powers: one distinct value gives the
+    (weighted) mean there.
     """
 
     x: np.ndarray
