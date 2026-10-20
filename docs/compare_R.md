@@ -209,7 +209,7 @@ plt.show()
 
 ## Synthetic Data Comparison (Reinsch Engine / All Knots)
 
-Finally, we compare the speed of both implementations on a synthetic dataset with 500 unique $x$ values. Since we use all unique $x$ values as knots, `scatter_smooth` automatically selects the efficient Reinsch engine.
+Finally, we compare the speed of both implementations on a synthetic dataset with 500 unique $x$ values. With `all_knots=True` (as R's `all.knots=TRUE`) every unique $x$ value is a knot, and `scatter_smooth` selects the efficient Reinsch engine. (By default, as in R, there are fewer knots once there are 50 or more unique values, and the B-spline engine is used.)
 
 ```{code-cell} ipython3
 # Synthetic data
@@ -221,13 +221,13 @@ y_syn = np.sin(np.sqrt(x_syn)*2) + rng.normal(0, 1, n_syn)
 x_plot = np.linspace(x_syn.min() - 1, x_syn.max() + 1, 200)
 
 # Python Fitting
-spline = SplineSmoother(x=x_syn, df=df)
+spline = SplineSmoother(x=x_syn, df=df, all_knots=True)
 spline.smooth(y_syn)
 y_plot_py = spline.predict(x_plot)
 
 # Python Timing (using all unique x as knots)
 print(f"Python Timing (n={n_syn}, all knots):")
-%timeit SplineSmoother(x=x_syn, df=df).smooth(y_syn)
+%timeit SplineSmoother(x=x_syn, df=df, all_knots=True).smooth(y_syn)
 ```
 
 ```{code-cell} ipython3

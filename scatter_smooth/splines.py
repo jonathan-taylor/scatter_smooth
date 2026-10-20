@@ -12,6 +12,34 @@ from ._scatter_smooth_extension import (
     trace_takahashi
 )
 
+def _nknots_smspl(n):
+    """The number of knots of R's `smooth.spline` (`.nknots.smspl`) for `n` unique values."""
+    if n < 50:
+        return n
+    a1, a2, a3, a4 = np.log2([50, 100, 140, 200])
+    if n < 200:
+        nk = 2**(a1 + (a2 - a1) * (n - 50) / 150)
+    elif n < 800:
+        nk = 2**(a2 + (a3 - a2) * (n - 200) / 600)
+    elif n < 3200:
+        nk = 2**(a3 + (a4 - a3) * (n - 800) / 2400)
+    else:
+        nk = 200 + (n - 3200)**0.2
+    return int(nk)
+
+
+def _default_knots(unique_x, all_knots=False):
+    """
+    All the (sorted) unique values, or, as R's `gam::s` (`sknotl`), with 50
+    or more of them, `_nknots_smspl(n)` of them evenly spaced by rank.
+    """
+    n = len(unique_x)
+    nk = n if all_knots else _nknots_smspl(n)
+    if nk == n:
+        return unique_x
+    return unique_x[(np.arange(nk) * (n - 1)) // (nk - 1)]
+
+
 @dataclass
 class SplineSmoother:
     """
@@ -31,6 +59,12 @@ class SplineSmoother:
         The knots for the spline.
     n_knots : int, optional
         The number of knots to use if knots are not provided.
+    all_knots : bool, optional
+        If True (and neither `knots` nor `n_knots` is given) the knots are
+        all the unique values of `x`. By default, as R's `smooth.spline` and
+        `gam::s`, they are all the unique values only when there are fewer
+        than 50 of them; otherwise `.nknots.smspl(n_unique)` of them (about
+        200 for large n), evenly spaced among the sorted unique values.
     order : int, optional
         The order of the B-spline (default is 4 for cubic B-splines). Only used if engine='bspline'.
     engine : str, optional
@@ -44,6 +78,7 @@ class SplineSmoother:
     df: float = None
     knots: np.ndarray = None
     n_knots: int = None
+    all_knots: bool = False
     order: int = 4
     engine: str = 'auto'
     
@@ -92,9 +127,9 @@ class SplineSmoother:
         if knots is None:
             if n_knots is not None:
                 percs = np.linspace(0, 100, n_knots)
-                knots = np.percentile(x, percs)
+                knots = np.unique(np.percentile(x, percs))
             else:
-                knots = np.sort(np.unique(x))
+                knots = _default_knots(np.unique(x), self.all_knots)
         else:
             knots = np.asarray(knots)
             knots.sort()
@@ -137,6 +172,7 @@ class SplineSmoother:
             
             self._use_reinsch = True
             self._inverse_indices = inverse
+            self._unique_x_scaled = unique_x
             
             # Aggregate weights for Reinsch
             w_raw = self.w if self.w is not None else np.ones(len(self.x_scaled_))
@@ -145,10 +181,12 @@ class SplineSmoother:
             self._cpp_fitter = ReinschSmoother(self.knots_scaled_, w_agg)
             
         elif self.engine == 'bspline':
+            # the fit depends on the data only through the unique x values and
+            # the sums of the weights (and of weights * y) over their ties
             self._use_reinsch = False
-            self._cpp_fitter = BSplineSmoother(self.x_scaled_, self.knots_scaled_, self.w, self.order)
-            self._NTWN = None
-            self._Omega = None
+            self._inverse_indices = inverse
+            self._unique_x_scaled = unique_x
+            self._make_bspline_fitter()
             
         elif self.engine == 'natural':
             self._use_reinsch = False
@@ -156,6 +194,17 @@ class SplineSmoother:
             
         else:
             raise ValueError(f"Unknown engine: {self.engine}")
+
+    def _aggregated_weights(self):
+        w_raw = self.w if self.w is not None else np.ones(len(self.x_scaled_))
+        return np.bincount(self._inverse_indices, weights=w_raw)
+
+    def _make_bspline_fitter(self):
+        self._cpp_fitter = BSplineSmoother(self._unique_x_scaled, self.knots_scaled_,
+                                           self._aggregated_weights(), self.order)
+        self._NTWN = None
+        self._Omega = None
+        self._cholesky_cache = {}
 
     def compute_df(self, lamval=None, eps=1e-12):
         """
@@ -189,19 +238,28 @@ class SplineSmoother:
             try:
                 # lower=False for Upper Banded
                 U = cholesky_banded(AB, lower=False)
-                self._cholesky_cache[lam_scaled] = U
-                return trace_takahashi(U, NTWN_sub)
-            except np.linalg.LinAlgError:
-                return 0.0
+            except np.linalg.LinAlgError as e:
+                raise RuntimeError(f'compute_df: the spline system is not positive definite '
+                                   f'at lamval={lamval}') from e
+            self._cholesky_cache[lam_scaled] = U
+            df = trace_takahashi(U, NTWN_sub)
         else:
-            return self._cpp_fitter.compute_df(lam_scaled)
+            df = self._cpp_fitter.compute_df(lam_scaled)
+        if not np.isfinite(df):
+            raise RuntimeError(f'compute_df: the degrees of freedom at lamval={lamval} are not '
+                               'finite (the spline system is too ill-conditioned; use fewer knots)')
+        return df
 
     def _find_lamval_for_df(self, target_df, log10_lam_bounds=(-8, 12)):
         """
         Finds the exact lambda value that yields the target degrees of freedom.
         """
         # Bounds check logic
-        max_df = self.n_k_ if self.engine != 'bspline' else (self.n_k_ + self.order - 2)
+        # the natural cubic splines with these knots have dimension n_k
+        max_df = self.n_k_
+        if not 2 <= target_df <= max_df:
+            raise ValueError(f'df={target_df} is out of range: the degrees of freedom of a '
+                             f'cubic smoothing spline with {max_df} knots are in [2, {max_df}]')
         if target_df >= max_df - 0.01:
              return 1e-15 * (self.x_scale_ ** 3)
         if target_df <= 2.01:
@@ -216,12 +274,14 @@ class SplineSmoother:
             def objective(log_lam):
                 return self.compute_df(10**log_lam) - target_df
             
-            try:
-                log_lam_opt = brentq(objective, min_log + shift, max_log + shift)
-                return 10**log_lam_opt
-            except ValueError:
-                # Fallback or wider search?
-                return self._cpp_fitter.solve_for_df(target_df, min_log, max_log) * (self.x_scale_ ** 3)
+            lo, hi = min_log + shift, max_log + shift
+            f_lo, f_hi = objective(lo), objective(hi)
+            if f_lo * f_hi > 0:
+                raise ValueError(f'df={target_df} is out of the range '
+                                 f'({f_hi + target_df:.3g}, {f_lo + target_df:.3g}) '
+                                 f'of lamval in 10**{log10_lam_bounds}')
+            log_lam_opt = brentq(objective, lo, hi, xtol=1e-12, rtol=1e-12)
+            return 10**log_lam_opt
         else:
              try:
                  lam_scaled = self._cpp_fitter.solve_for_df(target_df, min_log, max_log)
@@ -237,12 +297,8 @@ class SplineSmoother:
             self.update_weights(sample_weight)
         y_arr = np.asarray(y)
         
-        if self._use_reinsch:
-             w_raw = self.w if self.w is not None else np.ones(len(y_arr))
-             # w_agg is already in fitter, but we need it for y_agg
-             w_agg = np.bincount(self._inverse_indices, weights=w_raw)
-             y_sum = np.bincount(self._inverse_indices, weights=y_arr * w_raw)
-             y_eff = y_sum / w_agg
+        if self.engine in ('reinsch', 'bspline'):
+             y_eff = self._aggregated_response(y_arr)
         else:
              y_eff = y_arr
         
@@ -262,65 +318,129 @@ class SplineSmoother:
                  
         raise RuntimeError("C++ extension required for GCV optimization.")
 
+    def _aggregated_response(self, y):
+        """The weighted means of `y` over the ties of `x` (0 where the weights sum to 0)."""
+        w_raw = self.w if self.w is not None else np.ones(len(y))
+        w_agg = np.bincount(self._inverse_indices, weights=w_raw)
+        y_sum = np.bincount(self._inverse_indices, weights=y * w_raw)
+        return np.divide(y_sum, w_agg, out=np.zeros_like(y_sum), where=w_agg > 0)
+
     def smooth(self, y, sample_weight=None):
         """
-        Smooth the smoothing spline using the C++ extension.
+        Smooth `y` (with weights `sample_weight`, if given: the same as
+        `update_weights(sample_weight)` first).
+
+        Returns
+        -------
+        np.ndarray
+            The fitted values at `x`.
         """
         if sample_weight is not None:
-            self.w = sample_weight
-            if hasattr(self._cpp_fitter, "update_weights"):
-                 self._cpp_fitter.update_weights(self.w)
-            else:
-                 self._prepare_matrices()
+            self.update_weights(sample_weight)
         
         if self.lamval is None:
              self.lamval = 0.0
         lam_scaled = self.lamval / self.x_scale_**3
         
-        y_arr = np.asarray(y)
+        y_arr = np.asarray(y, float)
+        if len(y_arr) != len(self.x):
+            raise ValueError(f'y has length {len(y_arr)}, x has length {len(self.x)}')
         if self._use_reinsch:
-             w_raw = self.w if self.w is not None else np.ones(len(y_arr))
-             w_agg = np.bincount(self._inverse_indices, weights=w_raw)
-             y_sum = np.bincount(self._inverse_indices, weights=y_arr * w_raw)
-             y_eff = y_sum / w_agg
+             y_eff = self._aggregated_response(y_arr)
+             fitted_unique = np.asarray(self._cpp_fitter.smooth(y_eff, lam_scaled))
+             self.spline_coef_ = fitted_unique.copy()
+        elif self.engine == 'bspline':
+             if self._NTWN is None:
+                 self._NTWN = self._cpp_fitter.compute_design()
+             if self._Omega is None:
+                 self._Omega = self._cpp_fitter.compute_penalty()
+
+             b = self._cpp_fitter.compute_rhs(self._aggregated_response(y_arr))
              
-             self._cpp_fitter.smooth(y_eff, lam_scaled)
-        else:
-             if self.engine == 'bspline':
-                 if self._NTWN is None:
-                     self._NTWN = self._cpp_fitter.compute_design()
-                 if self._Omega is None:
-                     self._Omega = self._cpp_fitter.compute_penalty()
-                     
-                 b = self._cpp_fitter.compute_rhs(y_arr)
-                 
-                 n = b.shape[0]
-                 b_sub = b[1:n-1]
-                 
-                 if lam_scaled in self._cholesky_cache:
-                     U = self._cholesky_cache[lam_scaled]
-                     sol = cho_solve_banded((U, False), b_sub)
-                 else:
-                     NTWN_sub = self._NTWN[:, 1:n-1]
-                     Omega_sub = self._Omega[:, 1:n-1]
-                     AB = lam_scaled * Omega_sub + NTWN_sub
-                     sol = solveh_banded(AB, b_sub, lower=False)
-                     
-                 self._cpp_fitter.set_solution(sol)
+             n = b.shape[0]
+             b_sub = b[1:n-1]
+             
+             if lam_scaled in self._cholesky_cache:
+                 U = self._cholesky_cache[lam_scaled]
+                 sol = cho_solve_banded((U, False), b_sub)
              else:
-                 self._cpp_fitter.smooth(y_arr, lam_scaled)
+                 NTWN_sub = self._NTWN[:, 1:n-1]
+                 Omega_sub = self._Omega[:, 1:n-1]
+                 AB = lam_scaled * Omega_sub + NTWN_sub
+                 sol = solveh_banded(AB, b_sub, lower=False)
+                 
+             self._cpp_fitter.set_solution(sol)
+             self.spline_coef_ = np.asarray(sol, float)
+             fitted_unique = np.asarray(self._cpp_fitter.fitted())
+        else:
+             self._cpp_fitter.smooth(y_arr, lam_scaled)
+             fitted = self.predict(self.x)
+             self._set_linear_part(self.x, fitted,
+                                   self.w if self.w is not None else np.ones(len(self.x)))
+             return fitted
 
-        # Compute intercept and coef (linear part)
-        y_hat = self.predict(self.x)
-        w_eff = self.w if self.w is not None else np.ones(len(self.x))
-        
-        X = np.vander(self.x, 2)
-        Xw = X * w_eff[:, None]
-        yw = y_hat * w_eff
-        beta = np.linalg.lstsq(Xw, yw, rcond=None)[0]
+        # the linear part, from the fit at the unique values of x
+        w_agg = self._aggregated_weights()
+        self._set_linear_part(self.x_min_ + self.x_scale_ * self._unique_x_scaled,
+                              fitted_unique, w_agg)
+        return fitted_unique[self._inverse_indices]
 
-        self.intercept_ = beta[1]
-        self.coef_ = beta[0]
+    def _set_linear_part(self, x, f, w):
+        """The weighted least squares line through the fitted values `f` at `x`."""
+        sw = w.sum()
+        xbar, fbar = (w * x).sum() / sw, (w * f).sum() / sw
+        sxx = (w * (x - xbar)**2).sum()
+        self.coef_ = (w * (x - xbar) * (f - fbar)).sum() / sxx if sxx > 0 else 0.
+        self.intercept_ = fbar - self.coef_ * xbar
+
+    def set_spline_coef(self, coef):
+        """
+        Set the fitted spline from its coefficients `coef` (as `spline_coef_`
+        after a smooth): for the Reinsch engine, the values of the spline at
+        the knots; for the B-spline engine, the coefficients of the natural
+        B-spline basis. The coefficients are linear in the fit, and adding a
+        constant to them adds that constant to the spline.
+        """
+        coef = np.asarray(coef, float)
+        if self._use_reinsch:
+            # the natural cubic spline interpolating its values at the knots
+            self._cpp_fitter.smooth(coef, 0.)
+        elif self.engine == 'bspline':
+            self._cpp_fitter.set_solution(coef)
+        else:
+            raise NotImplementedError("set_spline_coef: not available for engine='natural'")
+        self.spline_coef_ = coef.copy()
+        return self
+
+    def roughness(self, coef=None):
+        """
+        The integral of the squared second derivative of the spline with
+        coefficients `coef` (by default `spline_coef_`), in the units of `x`.
+        """
+        coef = np.asarray(self.spline_coef_ if coef is None else coef, float)
+        if self._use_reinsch:
+            # Green & Silverman: g^T Q R^{-1} Q^T g
+            t = self.knots_scaled_
+            h = np.diff(t)
+            Qg = (coef[:-2] / h[:-1] - coef[1:-1] * (1 / h[:-1] + 1 / h[1:]) +
+                  coef[2:] / h[1:])
+            R = np.zeros((2, len(t) - 2))
+            R[1] = (h[:-1] + h[1:]) / 3
+            R[0, 1:] = h[1:-1] / 6
+            value = Qg @ solveh_banded(R, Qg)
+        elif self.engine == 'bspline':
+            if self._Omega is None:
+                self._Omega = self._cpp_fitter.compute_penalty()
+            n = self._Omega.shape[1]
+            Om = self._Omega[:, 1:n-1]          # upper banded, as in smooth()
+            kd = Om.shape[0] - 1
+            value = Om[kd] @ coef**2
+            for k in range(1, kd + 1):
+                value += 2 * Om[kd - k, k:] @ (coef[k:] * coef[:-k])
+        else:
+            raise NotImplementedError("roughness: not available for engine='natural'")
+        # f(x) = g((x - x_min) / scale): f'' = g'' / scale^2, dx = scale du
+        return float(value) / self.x_scale_**3
 
     def predict(self, x, deriv=0):
         """
@@ -355,18 +475,21 @@ class SplineSmoother:
 
     def update_weights(self, w):
         """
-        Update the weights and refit the model using C++.
+        Set new weights for the next smooths. `lamval` is kept; with a `df`
+        target, call `_find_lamval_for_df` again to match it at the new weights.
         """
+        w = np.asarray(w, float)
+        if len(w) != len(self.x):
+            raise ValueError(f'w has length {len(w)}, x has length {len(self.x)}')
         self.w = w
-        if hasattr(self._cpp_fitter, "update_weights"):
-             if self.engine == 'reinsch' and hasattr(self, '_inverse_indices') and self._inverse_indices is not None:
-                 w_agg = np.bincount(self._inverse_indices, weights=w)
-                 self._cpp_fitter.update_weights(w_agg)
-             else:
-                 self._cpp_fitter.update_weights(self.w)
+        if self.engine == 'reinsch':
+             self._cpp_fitter.update_weights(self._aggregated_weights())
+        elif self.engine == 'bspline':
+             self._cpp_fitter.update_weights(self._aggregated_weights())
+             self._NTWN = None
+             self._cholesky_cache = {}
         else:
-             # Re-create fitter if update_weights is not supported (e.g. BSpline currently)
-             self._prepare_matrices()
+             self._cpp_fitter.update_weights(self.w)
         
     # Expose N and Omega if available (Natural Spline only usually)
     @property

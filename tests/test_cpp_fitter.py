@@ -160,7 +160,7 @@ def test_cpp_prediction():
     py_pred = py_fitter.predict(x)
     
     # C++ fit (Main Class)
-    cpp_fitter = SplineSmoother(x, lamval=0.2)
+    cpp_fitter = SplineSmoother(x, lamval=0.2, all_knots=True)
     cpp_fitter.smooth(y)
     cpp_pred = cpp_fitter.predict(x)
     

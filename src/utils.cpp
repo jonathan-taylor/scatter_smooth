@@ -8,6 +8,9 @@ namespace utils {
     double brent_root(std::function<double(double)> func, double a, double b, double tol, int max_iter) {
         double fa = func(a);
         double fb = func(b);
+        if (!std::isfinite(fa) || !std::isfinite(fb)) {
+             throw std::runtime_error("Root finding: the function is not finite at the end points.");
+        }
         if (fa * fb > 0) {
              throw std::runtime_error("Root not bracketed: target DF out of feasible range.");
         }
@@ -47,6 +50,9 @@ namespace utils {
             }
             
             double fs = func(s);
+            if (!std::isfinite(fs)) {
+                 throw std::runtime_error("Root finding: the function is not finite.");
+            }
             d = c;
             c = b;
             fc = fb;
