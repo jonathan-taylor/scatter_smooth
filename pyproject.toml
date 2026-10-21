@@ -47,8 +47,8 @@ dev = [
     "setuptools_scm>=8",
 ]
 doc = [
-    "myst-parser",
-    "jupyter-book",
+    # the docs (docs/myst.yml); bundles the Jupyter server and kernel
+    "jupyter-book>=2,<3",
     "pandas",
     "matplotlib",
     "rpy2"

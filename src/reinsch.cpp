@@ -3,7 +3,6 @@
 #include <limits>
 #include <stdexcept>
 #include <cmath>
-#include <iostream>
 
 /**
  * Computes the non-zero bands of the matrices Q and R used in the Reinsch algorithm.

@@ -1,11 +1,9 @@
 version: 1
 project:
-  title: Smoothing Spline
+  title: scatter_smooth
   authors:
     - name: Jonathan Taylor
-  github: executablebooks/jupyter-book
-  bibliography:
-    - references.bib
+  github: jonathan-taylor/scatter_smooth
   exports:
     - format: pdf
       template: plain_latex_book
