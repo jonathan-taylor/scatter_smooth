@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+### Changed
+- The wheels workflow no longer publishes to PyPI: a tag builds the wheels and the sdist as artifacts, which are uploaded by hand with `twine`.
 ### Docs
 - The docs workflow builds with Jupyter Book 2 on Python 3.12 (one install of `.[doc]`, R's `microbenchmark` for the comparisons) and deploys from `main` through GitHub Actions; the `tag_name` input, which the Pages environment refused, is removed. `docs/myst.yml` has the project's title and repository, the docs use only public APIs (`compare_cpp.md` compares the Reinsch and B-spline engines), and the `doc` extra requires `jupyter-book>=2` instead of `myst-parser`. (#30)
 ### Fixed
